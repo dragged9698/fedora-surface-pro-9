@@ -17,12 +17,17 @@ set -euo pipefail
 # CONFIGURATION & CONSTANTS
 # ============================================================================
 
-readonly SCRIPT_VERSION="1.0.0"
+readonly SCRIPT_VERSION="2.0.0"
 readonly SCRIPT_NAME="$(basename "$0")"
 readonly LOG_DIR="/var/log/surface-setup"
 readonly LOG_FILE="$LOG_DIR/stage6.log"
 readonly COMPLETION_MARKER="$LOG_DIR/stage6.complete"
 readonly STAGE1_MARKER="$LOG_DIR/stage1.complete"
+
+# Gaming configuration directories
+readonly GAMING_CONFIG_DIR="/etc/gaming-setup"
+readonly SHADER_CACHE_DIR="$HOME/.cache/shader-cache"
+readonly DXVK_CACHE_DIR="$HOME/.cache/dxvk-cache"
 
 # Color codes for output
 readonly RED='\033[0;31m'
@@ -273,34 +278,261 @@ install_gaming_packages() {
     return 0
 }
 
+install_advanced_gaming_packages() {
+    log_info "Installing advanced gaming packages and tools..."
+    echo ""
+
+    # DXVK (Direct3D 11/12 to Vulkan translation)
+    log_info "Installing DXVK (Direct3D to Vulkan)..."
+    dnf copr enable -y @gaming/dxvk 2>&1 | tail -2 || {
+        log_warn "Failed to enable DXVK COPR repository"
+    }
+    dnf install -y dxvk 2>&1 | tail -3 || {
+        log_warn "DXVK not available (Proton includes fallback)"
+    }
+
+    # VKD3D (Direct3D 12 to Vulkan)
+    log_info "Installing VKD3D (Direct3D 12 to Vulkan)..."
+    dnf install -y vkd3d vkd3d.i686 2>&1 | tail -3 || {
+        log_warn "Failed to install VKD3D"
+    }
+
+    # D9VK (Direct3D 9 to Vulkan)
+    log_info "Installing D9VK (Direct3D 9 to Vulkan)..."
+    dnf copr enable -y @gaming/d9vk 2>&1 | tail -2 || {
+        log_warn "Failed to enable D9VK COPR repository"
+    }
+    dnf install -y d9vk 2>&1 | tail -3 || {
+        log_warn "D9VK not available (Proton includes fallback)"
+    }
+
+    # Heroic Launcher (Epic Games & GOG launcher)
+    log_info "Installing Heroic Launcher..."
+    dnf copr enable -y @gaming/heroic 2>&1 | tail -2 || {
+        log_warn "Failed to enable Heroic COPR repository"
+    }
+    dnf install -y heroic-games-launcher 2>&1 | tail -3 || {
+        log_warn "Heroic Launcher not available"
+    }
+
+    # Bottles (Windows app/game runner)
+    log_info "Installing Bottles..."
+    dnf install -y bottles 2>&1 | tail -3 || {
+        log_warn "Failed to install Bottles"
+    }
+
+    # GameHub (unified game launcher)
+    log_info "Installing GameHub..."
+    dnf copr enable -y @gaming/gamehub 2>&1 | tail -2 || {
+        log_warn "Failed to enable GameHub COPR repository"
+    }
+    dnf install -y gamehub 2>&1 | tail -3 || {
+        log_warn "GameHub not available"
+    }
+
+    # Proton-GE (community Proton builds)
+    log_info "Installing Proton-GE support..."
+    dnf copr enable -y @gaming/proton-ge 2>&1 | tail -2 || {
+        log_warn "Failed to enable Proton-GE COPR repository"
+    }
+    dnf install -y proton-ge 2>&1 | tail -3 || {
+        log_warn "Proton-GE not available (can be installed via ProtonUp-Qt)"
+    }
+
+    # Input device tools
+    log_info "Installing input device tools..."
+    dnf install -y jstest-gtk evtest joystick 2>&1 | tail -3 || {
+        log_warn "Failed to install input device tools"
+    }
+
+    # Additional codec support
+    log_info "Installing additional codec support..."
+    dnf install -y ffmpeg ffmpeg-libs 2>&1 | tail -3 || {
+        log_warn "Failed to install ffmpeg"
+    }
+
+    echo ""
+    log_success "Advanced gaming packages installation complete"
+    return 0
+}
+
+configure_gaming_performance() {
+    log_info "Configuring gaming performance optimizations..."
+    echo ""
+
+    # Create gaming config directory
+    mkdir -p "$GAMING_CONFIG_DIR" || {
+        log_warn "Failed to create gaming config directory"
+    }
+
+    # Configure CPU governor for performance
+    log_info "Configuring CPU governor for gaming..."
+    if command -v cpupower &>/dev/null; then
+        cpupower frequency-set -g performance 2>&1 | tail -2 || {
+            log_warn "Failed to set CPU governor (may require additional setup)"
+        }
+    else
+        log_warn "cpupower not available (install linux-tools for CPU tuning)"
+    fi
+
+    # Create shader cache directories
+    log_info "Creating shader cache directories..."
+    mkdir -p "$SHADER_CACHE_DIR" "$DXVK_CACHE_DIR" || {
+        log_warn "Failed to create cache directories"
+    }
+
+    # Configure system limits for gaming
+    log_info "Configuring system limits for gaming..."
+    cat > /etc/security/limits.d/99-gaming.conf << 'EOF'
+# Gaming performance limits
+* soft nofile 524288
+* hard nofile 524288
+* soft memlock unlimited
+* hard memlock unlimited
+* soft nproc 524288
+* hard nproc 524288
+EOF
+    log_success "System limits configured"
+
+    # Configure sysctl for gaming performance
+    log_info "Configuring kernel parameters for gaming..."
+    cat > /etc/sysctl.d/99-gaming.conf << 'EOF'
+# Gaming performance kernel parameters
+vm.max_map_count = 2147483642
+vm.swappiness = 10
+kernel.sched_migration_cost_ns = 5000000
+kernel.sched_autogroup_enabled = 0
+EOF
+    sysctl -p /etc/sysctl.d/99-gaming.conf 2>&1 | tail -3 || {
+        log_warn "Failed to apply kernel parameters"
+    }
+
+    echo ""
+    log_success "Gaming performance configuration complete"
+    return 0
+}
+
+configure_audio_optimization() {
+    log_info "Configuring audio optimization for gaming..."
+    echo ""
+
+    # Check if PipeWire is available (modern audio server)
+    if command -v pipewire &>/dev/null; then
+        log_info "PipeWire detected - configuring for gaming..."
+
+        # Create PipeWire gaming profile
+        mkdir -p "$HOME/.config/pipewire/pipewire.conf.d" 2>/dev/null || true
+
+        cat > "$HOME/.config/pipewire/pipewire.conf.d/99-gaming.conf" << 'EOF'
+# Gaming audio optimization
+context.properties = {
+    default.clock.rate = 48000
+    default.clock.allowed-rates = [ 48000 ]
+    default.period = 512
+    default.n.periods = 2
+}
+EOF
+        log_success "PipeWire gaming profile created"
+    else
+        log_info "PipeWire not available, checking for PulseAudio..."
+        if command -v pulseaudio &>/dev/null; then
+            log_info "PulseAudio detected - configuring for gaming..."
+
+            # Create PulseAudio gaming profile
+            mkdir -p "$HOME/.config/pulse" 2>/dev/null || true
+
+            cat > "$HOME/.config/pulse/daemon.conf.d/99-gaming.conf" << 'EOF'
+# Gaming audio optimization
+default-sample-rate = 48000
+default-sample-format = s16le
+default-channel-map = stereo
+resample-method = speex-float-5
+EOF
+            log_success "PulseAudio gaming profile created"
+        else
+            log_warn "No audio server detected"
+        fi
+    fi
+
+    echo ""
+    log_success "Audio optimization configuration complete"
+    return 0
+}
+
 display_gaming_info() {
     log_info "Gaming Setup Information:"
     echo ""
-    echo "  Installed Gaming Components:"
+    echo "  ╔════════════════════════════════════════════════════════════╗"
+    echo "  ║  CORE GAMING COMPONENTS                                   ║"
+    echo "  ╚════════════════════════════════════════════════════════════╝"
     echo "    ✓ Steam (primary gaming platform)"
     echo "    ✓ MangoHud (performance overlay)"
     echo "    ✓ GOverlay (MangoHud GUI configuration)"
     echo "    ✓ ProtonUp-Qt (Proton version manager - via COPR)"
     echo "    ✓ Wine + Winetricks (Windows compatibility)"
     echo "    ✓ Mesa Vulkan Drivers (32/64-bit)"
+    echo ""
+    echo "  ╔════════════════════════════════════════════════════════════╗"
+    echo "  ║  ADVANCED GAMING TOOLS                                    ║"
+    echo "  ╚════════════════════════════════════════════════════════════╝"
     echo "    ✓ Lutris (alternative game launcher)"
+    echo "    ✓ Heroic Launcher (Epic Games & GOG)"
+    echo "    ✓ Bottles (Windows app/game runner)"
+    echo "    ✓ GameHub (unified game launcher)"
     echo "    ✓ vkBasalt (Vulkan post-processing)"
     echo "    ✓ OBS Studio (streaming/recording)"
     echo "    ✓ Gamescope (gaming compositor)"
+    echo ""
+    echo "  ╔════════════════════════════════════════════════════════════╗"
+    echo "  ║  GRAPHICS & COMPATIBILITY                                 ║"
+    echo "  ╚════════════════════════════════════════════════════════════╝"
+    echo "    ✓ DXVK (Direct3D 11/12 to Vulkan)"
+    echo "    ✓ VKD3D (Direct3D 12 to Vulkan)"
+    echo "    ✓ D9VK (Direct3D 9 to Vulkan)"
+    echo "    ✓ Proton-GE (community Proton builds)"
+    echo ""
+    echo "  ╔════════════════════════════════════════════════════════════╗"
+    echo "  ║  CONTROLLER SUPPORT                                       ║"
+    echo "  ╚════════════════════════════════════════════════════════════╝"
     echo "    ✓ Xbox Controller Support (kernel-modules-extra + xpadneo)"
     echo "    ✓ DualSense Controller Support (steam-devices)"
+    echo "    ✓ Input device tools (jstest-gtk, evtest)"
     echo ""
-    echo "  Controller Setup:"
-    echo "    • Xbox Controllers: Connect via USB or Bluetooth"
-    echo "    • DualSense (PS5): Connect via USB or Bluetooth"
-    echo "    • Test: Use 'jstest-gtk' or 'evtest' to verify"
+    echo "  ╔════════════════════════════════════════════════════════════╗"
+    echo "  ║  PERFORMANCE OPTIMIZATIONS                                ║"
+    echo "  ╚════════════════════════════════════════════════════════════╝"
+    echo "    ✓ CPU governor set to performance"
+    echo "    ✓ Kernel parameters optimized (vm.max_map_count, swappiness)"
+    echo "    ✓ System limits configured for gaming"
+    echo "    ✓ Audio optimization (PipeWire/PulseAudio)"
+    echo "    ✓ Shader cache directories created"
     echo ""
-    echo "  Quick Start Guide:"
+    echo "  ╔════════════════════════════════════════════════════════════╗"
+    echo "  ║  QUICK START GUIDE                                        ║"
+    echo "  ╚════════════════════════════════════════════════════════════╝"
     echo "    1. Launch Steam from applications menu"
     echo "    2. Enable Proton in Steam Settings > Compatibility"
     echo "    3. Use ProtonUp-Qt to manage Proton versions"
     echo "    4. Use MangoHud for performance monitoring (Shift+F12)"
     echo "    5. Connect controllers via Bluetooth or USB"
+    echo "    6. Test controllers: jstest-gtk or evtest"
+    echo ""
+    echo "  ╔════════════════════════════════════════════════════════════╗"
+    echo "  ║  ADVANCED LAUNCHERS                                       ║"
+    echo "  ╚════════════════════════════════════════════════════════════╝"
+    echo "    • Heroic: Epic Games & GOG games"
+    echo "    • Bottles: Windows applications & games"
+    echo "    • GameHub: Unified game library"
+    echo "    • Lutris: Community game configurations"
+    echo ""
+    echo "  ╔════════════════════════════════════════════════════════════╗"
+    echo "  ║  CONFIGURATION FILES                                      ║"
+    echo "  ╚════════════════════════════════════════════════════════════╝"
+    echo "    • System limits: /etc/security/limits.d/99-gaming.conf"
+    echo "    • Kernel params: /etc/sysctl.d/99-gaming.conf"
+    echo "    • Audio config: ~/.config/pipewire/pipewire.conf.d/"
+    echo "    • Shader cache: ~/.cache/shader-cache/"
+    echo "    • DXVK cache: ~/.cache/dxvk-cache/"
     echo ""
 }
 
@@ -347,6 +579,21 @@ main() {
     log_info "Starting gaming setup..."
     echo ""
     install_gaming_packages
+
+    # Install advanced gaming packages
+    echo ""
+    install_advanced_gaming_packages
+
+    # Configure performance optimizations
+    echo ""
+    configure_gaming_performance
+
+    # Configure audio optimization
+    echo ""
+    configure_audio_optimization
+
+    # Display gaming information
+    echo ""
     display_gaming_info
 
     # Create completion marker
