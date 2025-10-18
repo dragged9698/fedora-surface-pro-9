@@ -139,10 +139,14 @@ install_gaming_packages() {
     fi
 
     # ProtonUp-Qt (Proton version manager)
-    if ! rpm -q protonplus-next &>/dev/null; then
+    if ! command -v protonup-qt &>/dev/null; then
         log_info "Installing ProtonUp-Qt (Proton manager)..."
-        dnf install -y protonplus-next 2>&1 | tail -3 || {
-            log_warn "Failed to install ProtonUp-Qt"
+        # ProtonUp-Qt is available via COPR repository
+        dnf copr enable -y apicalshark/ProtonUp-Qt 2>&1 | tail -2 || {
+            log_warn "Failed to enable ProtonUp-Qt COPR repository"
+        }
+        dnf install -y protonup-qt 2>&1 | tail -3 || {
+            log_warn "Failed to install ProtonUp-Qt (may need manual installation from GitHub)"
         }
     else
         log_success "ProtonUp-Qt is already installed"
@@ -233,24 +237,35 @@ install_gaming_packages() {
     echo ""
     log_info "Installing controller support packages..."
 
-    # Xbox controller support
-    if ! rpm -q xone &>/dev/null; then
-        log_info "Installing Xbox One controller support..."
-        dnf install -y xone 2>&1 | tail -3 || {
-            log_warn "Failed to install Xbox One controller support"
+    # Xbox controller support (via kernel-modules-extra)
+    log_info "Ensuring Xbox controller support..."
+    if ! rpm -q kernel-modules-extra &>/dev/null; then
+        log_info "Installing kernel-modules-extra (Xbox controller support)..."
+        dnf install -y kernel-modules-extra 2>&1 | tail -3 || {
+            log_warn "Failed to install kernel-modules-extra"
         }
     else
-        log_success "Xbox One controller support already installed"
+        log_success "kernel-modules-extra already installed (Xbox support)"
     fi
 
-    # DualSense controller support
-    if ! rpm -q ds-inhibit &>/dev/null; then
-        log_info "Installing DualSense controller support..."
-        dnf install -y ds-inhibit 2>&1 | tail -3 || {
-            log_warn "Failed to install DualSense controller support"
+    # Install xpadneo for better Xbox controller support (optional)
+    log_info "Installing xpadneo (enhanced Xbox controller support)..."
+    dnf copr enable -y sentry/xpadneo 2>&1 | tail -2 || {
+        log_warn "Failed to enable xpadneo COPR repository"
+    }
+    dnf install -y xpadneo 2>&1 | tail -3 || {
+        log_warn "xpadneo not available (Xbox controllers still supported via kernel)"
+    }
+
+    # DualSense controller support (via steam-devices)
+    log_info "Installing DualSense controller support..."
+    if ! rpm -q steam-devices &>/dev/null; then
+        log_info "Installing steam-devices (DualSense support)..."
+        dnf install -y steam-devices 2>&1 | tail -3 || {
+            log_warn "Failed to install steam-devices"
         }
     else
-        log_success "DualSense controller support already installed"
+        log_success "steam-devices already installed (DualSense support)"
     fi
 
     echo ""
@@ -265,14 +280,20 @@ display_gaming_info() {
     echo "    ✓ Steam (primary gaming platform)"
     echo "    ✓ MangoHud (performance overlay)"
     echo "    ✓ GOverlay (MangoHud GUI configuration)"
-    echo "    ✓ ProtonUp-Qt (Proton version manager)"
+    echo "    ✓ ProtonUp-Qt (Proton version manager - via COPR)"
     echo "    ✓ Wine + Winetricks (Windows compatibility)"
     echo "    ✓ Mesa Vulkan Drivers (32/64-bit)"
     echo "    ✓ Lutris (alternative game launcher)"
     echo "    ✓ vkBasalt (Vulkan post-processing)"
     echo "    ✓ OBS Studio (streaming/recording)"
     echo "    ✓ Gamescope (gaming compositor)"
-    echo "    ✓ Xbox & DualSense Controller Support"
+    echo "    ✓ Xbox Controller Support (kernel-modules-extra + xpadneo)"
+    echo "    ✓ DualSense Controller Support (steam-devices)"
+    echo ""
+    echo "  Controller Setup:"
+    echo "    • Xbox Controllers: Connect via USB or Bluetooth"
+    echo "    • DualSense (PS5): Connect via USB or Bluetooth"
+    echo "    • Test: Use 'jstest-gtk' or 'evtest' to verify"
     echo ""
     echo "  Quick Start Guide:"
     echo "    1. Launch Steam from applications menu"
