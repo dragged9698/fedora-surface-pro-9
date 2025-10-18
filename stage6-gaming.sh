@@ -470,6 +470,36 @@ IPTSD_CONFIG
         log_warn "iptsd service not available (will use OpenTabletDriver for stylus)"
     fi
 
+    # Create udev rules for OpenTabletDriver tablet detection
+    log_info "Creating udev rules for OpenTabletDriver..."
+    sudo tee /etc/udev/rules.d/99-opentabletdriver.rules > /dev/null << 'UDEV_RULES'
+# OpenTabletDriver udev rules for tablet device access
+# Allows OpenTabletDriver to detect and access tablet devices
+
+# Generic tablet devices
+SUBSYSTEM=="usb", MODE="0666"
+SUBSYSTEM=="hidraw", MODE="0666"
+
+# Surface Pro stylus (Intel Precise Touch & Stylus)
+SUBSYSTEM=="usb", ATTRS{idVendor}=="045e", ATTRS{idProduct}=="*", MODE="0666"
+
+# Wacom devices (fallback)
+SUBSYSTEM=="usb", ATTRS{idVendor}=="056a", MODE="0666"
+
+# HID devices for tablets
+SUBSYSTEM=="hid", MODE="0666"
+UDEV_RULES
+
+    # Reload udev rules
+    log_info "Reloading udev rules..."
+    sudo udevadm control --reload-rules 2>&1 | tail -1 || {
+        log_warn "Failed to reload udev rules"
+    }
+    sudo udevadm trigger 2>&1 | tail -1 || {
+        log_warn "Failed to trigger udev"
+    }
+    log_success "Udev rules configured for OpenTabletDriver"
+
     # Download and install OpenTabletDriver RPM
     log_info "Downloading and installing OpenTabletDriver..."
     local otd_download_dir="/tmp/OpenTabletDriver-download"
@@ -518,12 +548,22 @@ IPTSD_CONFIG
             log_warn "Failed to update initramfs (may not be critical)"
         }
 
-        # Enable OpenTabletDriver daemon autostart
-        log_info "Enabling OpenTabletDriver daemon autostart..."
-        systemctl --user enable opentabletdriver.service --now 2>&1 | tail -1 || {
-            log_warn "Failed to enable OpenTabletDriver autostart"
-        }
-        log_success "OpenTabletDriver autostart enabled"
+        # Configure OpenTabletDriver daemon to run as root (required for device access)
+        log_info "Configuring OpenTabletDriver daemon..."
+
+        # Enable system-wide daemon (runs as root for device access)
+        if sudo systemctl enable otd-daemon 2>&1 | tail -1; then
+            log_success "OpenTabletDriver system daemon enabled"
+
+            # Start the daemon
+            if sudo systemctl start otd-daemon 2>&1 | tail -1; then
+                log_success "OpenTabletDriver daemon started"
+            else
+                log_warn "Failed to start OpenTabletDriver daemon (may need manual start)"
+            fi
+        else
+            log_warn "Failed to enable OpenTabletDriver daemon"
+        fi
     else
         log_warn "Failed to install OpenTabletDriver RPM"
     fi
@@ -659,6 +699,13 @@ echo ""
 echo "Recent OpenTabletDriver logs:"
 journalctl -u otd-daemon -n 10 --no-pager
 
+echo ""
+echo "Tablet Detection Troubleshooting:"
+echo "  1. Check USB connection: lsusb | grep -i surface"
+echo "  2. Check udev rules: ls -la /etc/udev/rules.d/99-opentabletdriver.rules"
+echo "  3. Check device permissions: ls -la /dev/hidraw*"
+echo "  4. Reload udev: sudo udevadm control --reload-rules && sudo udevadm trigger"
+echo "  5. Restart daemon: sudo systemctl restart otd-daemon"
 echo ""
 echo "To configure OpenTabletDriver:"
 echo "  1. Launch GUI: opentabletdriver"
