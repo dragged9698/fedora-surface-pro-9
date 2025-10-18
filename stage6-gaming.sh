@@ -480,42 +480,55 @@ IPTSD_CONFIG
         return 1
     }
 
-    # Get latest release version
+    # Get latest release version (note: filename is lowercase, tag is v-prefixed)
     local otd_version="0.6.6.2"
-    local otd_rpm="OpenTabletDriver-${otd_version}-1.x86_64.rpm"
-    local otd_url="https://github.com/OpenTabletDriver/OpenTabletDriver/releases/download/${otd_version}/${otd_rpm}"
+    local otd_rpm="opentabletdriver-${otd_version}-1.x86_64.rpm"
+    local otd_url="https://github.com/OpenTabletDriver/OpenTabletDriver/releases/download/v${otd_version}/${otd_rpm}"
 
-    # Download RPM
-    if ! wget -q "$otd_url" -O "$otd_rpm" 2>/dev/null; then
-        log_warn "Failed to download OpenTabletDriver RPM"
+    # Download RPM with verbose error output and curl fallback
+    log_info "Attempting to download from: $otd_url"
+
+    if wget -v "$otd_url" -O "$otd_rpm" 2>&1 | tee -a "$LOG_FILE"; then
+        log_success "OpenTabletDriver RPM downloaded successfully"
+    elif command -v curl &>/dev/null; then
+        log_info "wget failed, trying curl as fallback..."
+        if curl -L "$otd_url" -o "$otd_rpm" 2>&1 | tee -a "$LOG_FILE"; then
+            log_success "OpenTabletDriver RPM downloaded successfully (via curl)"
+        else
+            log_warn "Failed to download OpenTabletDriver RPM (both wget and curl failed)"
+            log_info "Manual download: https://github.com/OpenTabletDriver/OpenTabletDriver/releases"
+            cd - > /dev/null
+            return 1
+        fi
+    else
+        log_warn "Failed to download OpenTabletDriver RPM (wget failed, curl not available)"
         log_info "Manual download: https://github.com/OpenTabletDriver/OpenTabletDriver/releases"
         cd - > /dev/null
-    else
-        log_success "OpenTabletDriver RPM downloaded"
-
-        # Install RPM
-        log_info "Installing OpenTabletDriver RPM..."
-        if sudo dnf install -y "./$otd_rpm" 2>&1 | tail -3; then
-            log_success "OpenTabletDriver installed successfully"
-
-            # Update initramfs
-            log_info "Updating initramfs..."
-            sudo dracut --regenerate-all --force 2>&1 | tail -1 || {
-                log_warn "Failed to update initramfs (may not be critical)"
-            }
-
-            # Enable OpenTabletDriver daemon autostart
-            log_info "Enabling OpenTabletDriver daemon autostart..."
-            systemctl --user enable opentabletdriver.service --now 2>&1 | tail -1 || {
-                log_warn "Failed to enable OpenTabletDriver autostart"
-            }
-            log_success "OpenTabletDriver autostart enabled"
-        else
-            log_warn "Failed to install OpenTabletDriver RPM"
-        fi
-
-        cd - > /dev/null
+        return 1
     fi
+
+    # Install RPM
+    log_info "Installing OpenTabletDriver RPM..."
+    if sudo dnf install -y "./$otd_rpm" 2>&1 | tail -3; then
+        log_success "OpenTabletDriver installed successfully"
+
+        # Update initramfs
+        log_info "Updating initramfs..."
+        sudo dracut --regenerate-all --force 2>&1 | tail -1 || {
+            log_warn "Failed to update initramfs (may not be critical)"
+        }
+
+        # Enable OpenTabletDriver daemon autostart
+        log_info "Enabling OpenTabletDriver daemon autostart..."
+        systemctl --user enable opentabletdriver.service --now 2>&1 | tail -1 || {
+            log_warn "Failed to enable OpenTabletDriver autostart"
+        }
+        log_success "OpenTabletDriver autostart enabled"
+    else
+        log_warn "Failed to install OpenTabletDriver RPM"
+    fi
+
+    cd - > /dev/null
 
     # Create OpenTabletDriver configuration script
     log_info "Creating OpenTabletDriver configuration script..."
@@ -662,12 +675,6 @@ EOF
     }
     log_success "Stylus testing utility created"
 
-    # Restart iptsd to apply changes
-    log_info "Restarting iptsd service..."
-    systemctl restart iptsd 2>&1 | tail -2 || {
-        log_warn "Failed to restart iptsd (may not be critical)"
-    }
-
     echo ""
     log_success "Stylus support configuration complete"
     return 0
@@ -679,47 +686,43 @@ display_gaming_info() {
     echo "  ╔════════════════════════════════════════════════════════════╗"
     echo "  ║  CORE GAMING COMPONENTS                                   ║"
     echo "  ╚════════════════════════════════════════════════════════════╝"
-    echo "    ✓ Steam (primary gaming platform)"
-    echo "    ✓ MangoHud (performance overlay)"
-    echo "    ✓ GOverlay (MangoHud GUI configuration)"
-    echo "    ✓ ProtonUp-Qt (Proton version manager - via COPR)"
-    echo "    ✓ Wine + Winetricks (Windows compatibility)"
-    echo "    ✓ Mesa Vulkan Drivers (32/64-bit)"
+    rpm -q steam &>/dev/null && echo "    ✓ Steam (primary gaming platform)" || echo "    ✗ Steam (not installed)"
+    rpm -q mangohud &>/dev/null && echo "    ✓ MangoHud (performance overlay)" || echo "    ✗ MangoHud (not installed)"
+    rpm -q goverlay &>/dev/null && echo "    ✓ GOverlay (MangoHud GUI configuration)" || echo "    ✗ GOverlay (not installed)"
+    command -v protonup-qt &>/dev/null && echo "    ✓ ProtonUp-Qt (Proton version manager - via COPR)" || echo "    ✗ ProtonUp-Qt (not installed)"
+    rpm -q wine &>/dev/null && echo "    ✓ Wine + Winetricks (Windows compatibility)" || echo "    ✗ Wine (not installed)"
+    rpm -q mesa-vulkan-drivers &>/dev/null && echo "    ✓ Mesa Vulkan Drivers (32/64-bit)" || echo "    ✗ Mesa Vulkan Drivers (not installed)"
     echo ""
     echo "  ╔════════════════════════════════════════════════════════════╗"
     echo "  ║  ADVANCED GAMING TOOLS                                    ║"
     echo "  ╚════════════════════════════════════════════════════════════╝"
-    echo "    ✓ Lutris (alternative game launcher)"
-    echo "    ✓ Heroic Launcher (Epic Games & GOG)"
-    echo "    ✓ Bottles (Windows app/game runner)"
-    echo "    ✓ GameHub (unified game launcher)"
-    echo "    ✓ vkBasalt (Vulkan post-processing)"
-    echo "    ✓ OBS Studio (streaming/recording)"
-    echo "    ✓ Gamescope (gaming compositor)"
+    rpm -q lutris &>/dev/null && echo "    ✓ Lutris (alternative game launcher)" || echo "    ✗ Lutris (not installed)"
+    rpm -q bottles &>/dev/null && echo "    ✓ Bottles (Windows app/game runner)" || echo "    ✗ Bottles (not installed)"
+    rpm -q vkbasalt &>/dev/null && echo "    ✓ vkBasalt (Vulkan post-processing)" || echo "    ✗ vkBasalt (not installed)"
+    rpm -q obs-studio &>/dev/null && echo "    ✓ OBS Studio (streaming/recording)" || echo "    ✗ OBS Studio (not installed)"
+    rpm -q gamescope &>/dev/null && echo "    ✓ Gamescope (gaming compositor)" || echo "    ✗ Gamescope (not installed)"
     echo ""
     echo "  ╔════════════════════════════════════════════════════════════╗"
     echo "  ║  GRAPHICS & COMPATIBILITY                                 ║"
     echo "  ╚════════════════════════════════════════════════════════════╝"
-    echo "    ✓ VKD3D (Direct3D 12 to Vulkan)"
-    echo "    ✓ Proton (Steam's compatibility layer)"
-    echo "    ✓ Wine (Windows compatibility)"
-    echo "    ✓ Mesa Vulkan drivers (32/64-bit)"
+    rpm -q vkd3d &>/dev/null && echo "    ✓ VKD3D (Direct3D 12 to Vulkan)" || echo "    ✗ VKD3D (not installed)"
+    echo "    ✓ Proton (Steam's compatibility layer - included with Steam)"
+    rpm -q wine &>/dev/null && echo "    ✓ Wine (Windows compatibility)" || echo "    ✗ Wine (not installed)"
+    rpm -q mesa-vulkan-drivers &>/dev/null && echo "    ✓ Mesa Vulkan drivers (32/64-bit)" || echo "    ✗ Mesa Vulkan drivers (not installed)"
     echo ""
     echo "  ╔════════════════════════════════════════════════════════════╗"
     echo "  ║  CONTROLLER & INPUT SUPPORT                               ║"
     echo "  ╚════════════════════════════════════════════════════════════╝"
-    echo "    ✓ Xbox Controller Support (kernel-modules-extra + xpadneo)"
-    echo "    ✓ DualSense Controller Support (steam-devices)"
-    echo "    ✓ Input device tools (jstest-gtk, evtest)"
+    rpm -q kernel-modules-extra &>/dev/null && echo "    ✓ Xbox Controller Support (kernel-modules-extra)" || echo "    ✗ Xbox Controller Support (not installed)"
+    rpm -q steam-devices &>/dev/null && echo "    ✓ DualSense Controller Support (steam-devices)" || echo "    ✗ DualSense Controller Support (not installed)"
     echo ""
     echo "  ╔════════════════════════════════════════════════════════════╗"
     echo "  ║  STYLUS SUPPORT (OpenTabletDriver - osu! optimized)       ║"
     echo "  ╚════════════════════════════════════════════════════════════╝"
-    echo "    ✓ OpenTabletDriver (gaming-optimized stylus driver)"
-    echo "    ✓ libwacom (fallback support)"
-    echo "    ✓ osu! gaming profile pre-configured"
-    echo "    ✓ Daemon auto-start enabled"
-    echo "    ✓ Configuration tools included"
+    command -v opentabletdriver &>/dev/null && echo "    ✓ OpenTabletDriver (gaming-optimized stylus driver)" || echo "    ✗ OpenTabletDriver (not installed)"
+    rpm -q libwacom &>/dev/null && echo "    ✓ libwacom (fallback support)" || echo "    ✗ libwacom (not installed)"
+    [[ -f "$HOME/.config/OpenTabletDriver/osu-profile.json" ]] && echo "    ✓ osu! gaming profile pre-configured" || echo "    ✗ osu! gaming profile (not configured)"
+    [[ -f "/etc/gaming-setup/stylus/test-stylus.sh" ]] && echo "    ✓ Configuration tools included" || echo "    ✗ Configuration tools (not found)"
     echo ""
     echo "  ╔════════════════════════════════════════════════════════════╗"
     echo "  ║  PERFORMANCE OPTIMIZATIONS                                ║"
