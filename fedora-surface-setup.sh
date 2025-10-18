@@ -601,48 +601,41 @@ install_auto_cpufreq() {
         return 1
     }
 
-    # Clean up any existing bad config files before installation
-    log_info "Cleaning up existing auto-cpufreq config files..."
-    sudo rm -f /etc/auto-cpufreq.conf 2>/dev/null || true
-    sudo rm -f ~/.config/auto-cpufreq.conf 2>/dev/null || true
-
-    # Install auto-cpufreq via pip (most reliable method)
-    log_info "Installing auto-cpufreq via pip..."
-    echo ""
-
     cd - >/dev/null || true
     rm -rf "$temp_dir"
 
+    # Try to install auto-cpufreq, but don't fail if it doesn't work
+    log_info "Attempting to install auto-cpufreq..."
+    echo ""
+
     if pip3 install auto-cpufreq 2>&1 | tee /tmp/auto-cpufreq-install.log; then
-        log_success "auto-cpufreq installed via pip"
+        log_success "auto-cpufreq installed successfully"
         sleep 2
 
         if command -v auto-cpufreq &>/dev/null; then
             log_success "auto-cpufreq verified and ready"
 
-            # Enable and start the service
+            # Try to enable and start the service
             log_info "Enabling auto-cpufreq service..."
-            if sudo systemctl enable auto-cpufreq 2>&1 | tail -3; then
-                log_success "auto-cpufreq service enabled"
-            fi
+            sudo systemctl enable auto-cpufreq 2>&1 | tail -3 || true
 
             log_info "Starting auto-cpufreq service..."
-            if sudo systemctl start auto-cpufreq 2>&1 | tail -3; then
-                log_success "auto-cpufreq service started"
-            fi
+            sudo systemctl start auto-cpufreq 2>&1 | tail -3 || true
 
+            log_success "auto-cpufreq service configured"
             echo ""
             return 0
-        else
-            log_error "auto-cpufreq not found after pip installation"
-            return 1
         fi
-    else
-        log_error "Failed to install auto-cpufreq via pip"
-        log_error "Check /tmp/auto-cpufreq-install.log for details"
-        tail -20 /tmp/auto-cpufreq-install.log | sed 's/^/  /'
-        return 1
     fi
+
+    # If we get here, auto-cpufreq installation failed
+    log_warn "auto-cpufreq installation encountered issues"
+    log_warn "This is optional - the system will still work without it"
+    log_warn "You can try installing it manually later with: pip3 install auto-cpufreq"
+    echo ""
+
+    # Don't fail the entire script - continue anyway
+    return 0
 
     cd - >/dev/null || true
     rm -rf "$temp_dir"
