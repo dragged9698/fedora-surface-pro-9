@@ -22,6 +22,9 @@ readonly SCRIPT_VERSION="1.0.0"
 readonly SCRIPT_NAME="$(basename "$0")"
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Command-line flags
+INSTALL_GAMING=false
+
 # Color codes for output
 readonly RED='\033[0;31m'
 readonly GREEN='\033[0;32m'
@@ -1739,11 +1742,204 @@ install_vscode() {
     fi
 }
 
+install_gaming_packages() {
+    log_info "Installing gaming packages for Surface Pro 9..."
+    echo ""
+
+    # Enable RPM Fusion repositories if not already enabled
+    log_info "Ensuring RPM Fusion repositories are enabled..."
+    if ! dnf repolist 2>/dev/null | grep -q "rpmfusion"; then
+        log_info "Adding RPM Fusion repositories..."
+        dnf install -y https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm \
+                         https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm 2>&1 | tail -3 || {
+            log_warn "Failed to add RPM Fusion repositories"
+        }
+    else
+        log_success "RPM Fusion repositories already enabled"
+    fi
+
+    echo ""
+    log_info "Installing priority gaming packages..."
+
+    # Steam (primary gaming platform)
+    if ! rpm -q steam &>/dev/null; then
+        log_info "Installing Steam..."
+        dnf install -y steam 2>&1 | tail -3 || {
+            log_warn "Failed to install Steam"
+        }
+    else
+        log_success "Steam is already installed"
+    fi
+
+    # MangoHud (performance overlay)
+    if ! rpm -q mangohud &>/dev/null; then
+        log_info "Installing MangoHud (performance overlay)..."
+        dnf install -y mangohud 2>&1 | tail -3 || {
+            log_warn "Failed to install MangoHud"
+        }
+    else
+        log_success "MangoHud is already installed"
+    fi
+
+    # GOverlay (MangoHud GUI)
+    if ! rpm -q goverlay &>/dev/null; then
+        log_info "Installing GOverlay (MangoHud configuration)..."
+        dnf install -y goverlay 2>&1 | tail -3 || {
+            log_warn "Failed to install GOverlay"
+        }
+    else
+        log_success "GOverlay is already installed"
+    fi
+
+    # ProtonUp-Qt (Proton version manager)
+    if ! rpm -q protonplus-next &>/dev/null; then
+        log_info "Installing ProtonUp-Qt (Proton manager)..."
+        dnf install -y protonplus-next 2>&1 | tail -3 || {
+            log_warn "Failed to install ProtonUp-Qt"
+        }
+    else
+        log_success "ProtonUp-Qt is already installed"
+    fi
+
+    # Wine with 32-bit support
+    if ! rpm -q wine &>/dev/null; then
+        log_info "Installing Wine (Windows compatibility layer)..."
+        dnf install -y wine wine.i686 2>&1 | tail -3 || {
+            log_warn "Failed to install Wine"
+        }
+    else
+        log_success "Wine is already installed"
+    fi
+
+    # Winetricks (Wine helper)
+    if ! rpm -q winetricks &>/dev/null; then
+        log_info "Installing Winetricks (Wine helper)..."
+        dnf install -y winetricks 2>&1 | tail -3 || {
+            log_warn "Failed to install Winetricks"
+        }
+    else
+        log_success "Winetricks is already installed"
+    fi
+
+    # Mesa Vulkan drivers (graphics performance)
+    if ! rpm -q mesa-vulkan-drivers &>/dev/null; then
+        log_info "Installing Mesa Vulkan drivers (64-bit)..."
+        dnf install -y mesa-vulkan-drivers 2>&1 | tail -3 || {
+            log_warn "Failed to install Mesa Vulkan drivers (64-bit)"
+        }
+    else
+        log_success "Mesa Vulkan drivers (64-bit) already installed"
+    fi
+
+    if ! rpm -q mesa-vulkan-drivers.i686 &>/dev/null; then
+        log_info "Installing Mesa Vulkan drivers (32-bit)..."
+        dnf install -y mesa-vulkan-drivers.i686 2>&1 | tail -3 || {
+            log_warn "Failed to install Mesa Vulkan drivers (32-bit)"
+        }
+    else
+        log_success "Mesa Vulkan drivers (32-bit) already installed"
+    fi
+
+    echo ""
+    log_info "Installing optional gaming packages..."
+
+    # Lutris (alternative game launcher)
+    if ! rpm -q lutris &>/dev/null; then
+        log_info "Installing Lutris (game launcher)..."
+        dnf install -y lutris 2>&1 | tail -3 || {
+            log_warn "Failed to install Lutris"
+        }
+    else
+        log_success "Lutris is already installed"
+    fi
+
+    # vkBasalt (Vulkan post-processing)
+    if ! rpm -q vkbasalt &>/dev/null; then
+        log_info "Installing vkBasalt (Vulkan enhancements)..."
+        dnf install -y vkbasalt 2>&1 | tail -3 || {
+            log_warn "Failed to install vkBasalt"
+        }
+    else
+        log_success "vkBasalt is already installed"
+    fi
+
+    # OBS Studio (streaming/recording)
+    if ! rpm -q obs-studio &>/dev/null; then
+        log_info "Installing OBS Studio (streaming/recording)..."
+        dnf install -y obs-studio 2>&1 | tail -3 || {
+            log_warn "Failed to install OBS Studio"
+        }
+    else
+        log_success "OBS Studio is already installed"
+    fi
+
+    # Gamescope (gaming compositor - optional, not for handheld mode)
+    if ! rpm -q gamescope &>/dev/null; then
+        log_info "Installing Gamescope (gaming compositor)..."
+        dnf install -y gamescope 2>&1 | tail -3 || {
+            log_warn "Failed to install Gamescope"
+        }
+    else
+        log_success "Gamescope is already installed"
+    fi
+
+    echo ""
+    log_info "Installing controller support packages..."
+
+    # Xbox controller support
+    if ! rpm -q xone &>/dev/null; then
+        log_info "Installing Xbox One controller support..."
+        dnf install -y xone 2>&1 | tail -3 || {
+            log_warn "Failed to install Xbox One controller support"
+        }
+    else
+        log_success "Xbox One controller support already installed"
+    fi
+
+    # DualSense controller support
+    if ! rpm -q ds-inhibit &>/dev/null; then
+        log_info "Installing DualSense controller support..."
+        dnf install -y ds-inhibit 2>&1 | tail -3 || {
+            log_warn "Failed to install DualSense controller support"
+        }
+    else
+        log_success "DualSense controller support already installed"
+    fi
+
+    echo ""
+    log_success "Gaming packages installation complete"
+    return 0
+}
+
 # ============================================================================
 # MAIN EXECUTION
 # ============================================================================
 
 main() {
+    # Parse command-line arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --install-gaming)
+                INSTALL_GAMING=true
+                log_info "Gaming packages installation enabled"
+                shift
+                ;;
+            --help)
+                echo "Usage: $SCRIPT_NAME [OPTIONS]"
+                echo ""
+                echo "Options:"
+                echo "  --install-gaming    Install gaming packages (Steam, Lutris, ProtonUp-Qt, etc.)"
+                echo "  --help              Show this help message"
+                echo ""
+                exit 0
+                ;;
+            *)
+                log_warn "Unknown option: $1"
+                shift
+                ;;
+        esac
+    done
+
     clear
     echo -e "${BLUE}╔════════════════════════════════════════════════════════════╗${NC}"
     echo -e "${BLUE}║     Fedora Surface Setup Script v${SCRIPT_VERSION}                    ║${NC}"
@@ -1808,6 +2004,13 @@ main() {
     install_vscode
     echo ""
 
+    # Optional gaming packages
+    if [[ "$INSTALL_GAMING" == "true" ]]; then
+        log_info "Installing optional gaming packages..."
+        install_gaming_packages
+        echo ""
+    fi
+
     # Surface Pro 9 specific fixes
     log_info "Applying Surface Pro 9 specific fixes..."
     apply_surface_pro9_fixes
@@ -1849,6 +2052,22 @@ main() {
     echo "  ✓ Steam (Gaming Platform)"
     echo "  ✓ Visual Studio Code"
     echo ""
+
+    if [[ "$INSTALL_GAMING" == "true" ]]; then
+        echo -e "${BLUE}Gaming Packages:${NC}"
+        echo "  ✓ MangoHud (Performance Overlay)"
+        echo "  ✓ GOverlay (MangoHud Configuration)"
+        echo "  ✓ ProtonUp-Qt (Proton Manager)"
+        echo "  ✓ Wine + Winetricks (Windows Compatibility)"
+        echo "  ✓ Mesa Vulkan Drivers (Graphics Performance)"
+        echo "  ✓ Lutris (Game Launcher)"
+        echo "  ✓ vkBasalt (Vulkan Enhancements)"
+        echo "  ✓ OBS Studio (Streaming/Recording)"
+        echo "  ✓ Gamescope (Gaming Compositor)"
+        echo "  ✓ Xbox & DualSense Controller Support"
+        echo ""
+    fi
+
     echo -e "${YELLOW}IMPORTANT: A system reboot is required to complete the installation.${NC}"
     echo -e "${YELLOW}The Linux Surface kernel, rEFInd, and auto-cpufreq will be active after reboot.${NC}"
     echo -e "${YELLOW}RCU Lazy kernel parameter requires reboot to take effect.${NC}"
