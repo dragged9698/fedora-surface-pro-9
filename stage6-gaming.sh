@@ -459,6 +459,220 @@ EOF
     return 0
 }
 
+configure_stylus_support() {
+    log_info "Configuring stylus support for Surface Pro..."
+    echo ""
+
+    # Install stylus-related packages
+    log_info "Installing stylus support packages..."
+    dnf install -y libwacom libwacom-data wacom-tools 2>&1 | tail -3 || {
+        log_warn "Failed to install stylus support packages"
+    }
+
+    # Create stylus configuration directory
+    local stylus_config_dir="/etc/gaming-setup/stylus"
+    mkdir -p "$stylus_config_dir" || {
+        log_warn "Failed to create stylus config directory"
+    }
+
+    # Configure iptsd stylus settings (enhance existing config)
+    log_info "Enhancing iptsd stylus configuration..."
+    local iptsd_conf="/etc/iptsd/iptsd.conf"
+
+    if [[ -f "$iptsd_conf" ]]; then
+        # Backup existing config
+        cp "$iptsd_conf" "${iptsd_conf}.backup.$(date +%s)" 2>/dev/null || true
+
+        # Enhance stylus section with gaming-optimized settings
+        if ! grep -q "StylusGameMode" "$iptsd_conf"; then
+            cat >> "$iptsd_conf" << 'EOF'
+
+# Gaming-optimized stylus settings
+[StylusGaming]
+TipDistance = 0
+PressureThreshold = 10
+MaxPressure = 4095
+SmoothingFactor = 0.8
+LatencyCompensation = true
+EOF
+            log_success "Gaming stylus settings added to iptsd config"
+        fi
+    else
+        log_warn "iptsd configuration not found - stylus may need manual setup"
+    fi
+
+    # Create udev rules for stylus pressure sensitivity
+    log_info "Creating udev rules for stylus pressure sensitivity..."
+    cat > /etc/udev/rules.d/99-stylus-gaming.rules << 'EOF'
+# Surface Pro stylus gaming optimization
+# Increase pressure levels for better precision
+SUBSYSTEM=="input", ATTRS{name}=="*Stylus*", ENV{LIBINPUT_CALIBRATION_MATRIX}="1 0 0 0 1 0"
+
+# Enable stylus button mapping for gaming
+SUBSYSTEM=="input", ATTRS{name}=="*Stylus*", RUN+="/usr/bin/xinput set-prop %k 'Stylus Pressure' 4095"
+EOF
+
+    # Reload udev rules
+    udevadm control --reload-rules 2>&1 | tail -1 || {
+        log_warn "Failed to reload udev rules"
+    }
+    udevadm trigger 2>&1 | tail -1 || {
+        log_warn "Failed to trigger udev"
+    }
+    log_success "Udev rules created and reloaded"
+
+    # Create stylus calibration script
+    log_info "Creating stylus calibration script..."
+    cat > "$stylus_config_dir/calibrate-stylus.sh" << 'EOF'
+#!/bin/bash
+# Stylus calibration script for Surface Pro gaming
+
+echo "Surface Pro Stylus Calibration"
+echo "=============================="
+echo ""
+echo "This script helps calibrate your stylus for optimal gaming performance."
+echo ""
+
+# Check if xinput is available
+if ! command -v xinput &>/dev/null; then
+    echo "Error: xinput not found. Install xorg-x11-apps package."
+    exit 1
+fi
+
+# List input devices
+echo "Available input devices:"
+xinput list | grep -i stylus
+
+echo ""
+echo "Stylus calibration options:"
+echo "1. Reset to defaults"
+echo "2. Increase pressure sensitivity"
+echo "3. Decrease pressure sensitivity"
+echo "4. Test stylus input"
+echo ""
+read -p "Select option (1-4): " option
+
+case $option in
+    1)
+        echo "Resetting stylus to default settings..."
+        # Reset pressure to default
+        xinput set-prop "Stylus" "Stylus Pressure" 4095
+        echo "Done!"
+        ;;
+    2)
+        echo "Increasing pressure sensitivity..."
+        xinput set-prop "Stylus" "Stylus Pressure" 2048
+        echo "Done!"
+        ;;
+    3)
+        echo "Decreasing pressure sensitivity..."
+        xinput set-prop "Stylus" "Stylus Pressure" 8191
+        echo "Done!"
+        ;;
+    4)
+        echo "Testing stylus input..."
+        echo "Move stylus over the screen and press buttons..."
+        sleep 5
+        xinput test "Stylus"
+        ;;
+    *)
+        echo "Invalid option"
+        exit 1
+        ;;
+esac
+EOF
+    chmod +x "$stylus_config_dir/calibrate-stylus.sh" || {
+        log_warn "Failed to make calibration script executable"
+    }
+    log_success "Stylus calibration script created"
+
+    # Create stylus pressure mapping for drawing applications
+    log_info "Creating stylus pressure mapping configuration..."
+    mkdir -p "$HOME/.config/wacom" 2>/dev/null || true
+
+    cat > "$HOME/.config/wacom/stylus-gaming.conf" << 'EOF'
+# Stylus pressure mapping for gaming applications
+# This configuration optimizes stylus response for drawing and painting games
+
+[Stylus]
+# Pressure curve: linear (0) to exponential (1)
+PressureCurve=0.5
+
+# Pressure threshold (0-255)
+PressureThreshold=10
+
+# Tilt sensitivity (0-100)
+TiltSensitivity=100
+
+# Rotation sensitivity (0-100)
+RotationSensitivity=100
+
+# Button mapping
+Button1=1
+Button2=2
+Button3=3
+
+# Haptic feedback (if supported)
+HapticFeedback=true
+EOF
+    log_success "Stylus pressure mapping created"
+
+    # Create stylus testing utility
+    log_info "Creating stylus testing utility..."
+    cat > "$stylus_config_dir/test-stylus.sh" << 'EOF'
+#!/bin/bash
+# Test stylus functionality
+
+echo "Surface Pro Stylus Test"
+echo "======================="
+echo ""
+
+# Check if stylus is detected
+if xinput list | grep -qi stylus; then
+    echo "✓ Stylus detected"
+else
+    echo "✗ Stylus NOT detected"
+    exit 1
+fi
+
+# Get stylus device ID
+stylus_id=$(xinput list | grep -i stylus | grep -oP 'id=\K[0-9]+' | head -1)
+
+if [[ -z "$stylus_id" ]]; then
+    echo "✗ Could not find stylus device ID"
+    exit 1
+fi
+
+echo "✓ Stylus device ID: $stylus_id"
+echo ""
+
+# Test stylus properties
+echo "Stylus Properties:"
+xinput list-props "$stylus_id" | grep -i pressure
+
+echo ""
+echo "Testing stylus input (move stylus and press buttons)..."
+echo "Press Ctrl+C to stop"
+echo ""
+
+xinput test "$stylus_id"
+EOF
+    chmod +x "$stylus_config_dir/test-stylus.sh" || {
+        log_warn "Failed to make test script executable"
+    }
+    log_success "Stylus testing utility created"
+
+    # Restart iptsd to apply changes
+    log_info "Restarting iptsd service..."
+    systemctl restart iptsd 2>&1 | tail -2 || {
+        log_warn "Failed to restart iptsd (may not be critical)"
+    }
+
+    echo ""
+    log_success "Stylus support configuration complete"
+    return 0
+}
+
 display_gaming_info() {
     log_info "Gaming Setup Information:"
     echo ""
@@ -492,11 +706,13 @@ display_gaming_info() {
     echo "    ✓ Proton-GE (community Proton builds)"
     echo ""
     echo "  ╔════════════════════════════════════════════════════════════╗"
-    echo "  ║  CONTROLLER SUPPORT                                       ║"
+    echo "  ║  CONTROLLER & INPUT SUPPORT                               ║"
     echo "  ╚════════════════════════════════════════════════════════════╝"
     echo "    ✓ Xbox Controller Support (kernel-modules-extra + xpadneo)"
     echo "    ✓ DualSense Controller Support (steam-devices)"
     echo "    ✓ Input device tools (jstest-gtk, evtest)"
+    echo "    ✓ Surface Pro Stylus Support (libwacom, iptsd enhanced)"
+    echo "    ✓ Stylus pressure mapping & calibration"
     echo ""
     echo "  ╔════════════════════════════════════════════════════════════╗"
     echo "  ║  PERFORMANCE OPTIMIZATIONS                                ║"
@@ -516,6 +732,8 @@ display_gaming_info() {
     echo "    4. Use MangoHud for performance monitoring (Shift+F12)"
     echo "    5. Connect controllers via Bluetooth or USB"
     echo "    6. Test controllers: jstest-gtk or evtest"
+    echo "    7. Test stylus: /etc/gaming-setup/stylus/test-stylus.sh"
+    echo "    8. Calibrate stylus: /etc/gaming-setup/stylus/calibrate-stylus.sh"
     echo ""
     echo "  ╔════════════════════════════════════════════════════════════╗"
     echo "  ║  ADVANCED LAUNCHERS                                       ║"
@@ -533,6 +751,18 @@ display_gaming_info() {
     echo "    • Audio config: ~/.config/pipewire/pipewire.conf.d/"
     echo "    • Shader cache: ~/.cache/shader-cache/"
     echo "    • DXVK cache: ~/.cache/dxvk-cache/"
+    echo "    • Stylus config: /etc/iptsd/iptsd.conf"
+    echo "    • Stylus gaming: ~/.config/wacom/stylus-gaming.conf"
+    echo "    • Stylus tools: /etc/gaming-setup/stylus/"
+    echo ""
+    echo "  ╔════════════════════════════════════════════════════════════╗"
+    echo "  ║  STYLUS TROUBLESHOOTING                                   ║"
+    echo "  ╚════════════════════════════════════════════════════════════╝"
+    echo "    • Test stylus: /etc/gaming-setup/stylus/test-stylus.sh"
+    echo "    • Calibrate: /etc/gaming-setup/stylus/calibrate-stylus.sh"
+    echo "    • Check iptsd: systemctl status iptsd"
+    echo "    • View logs: journalctl -u iptsd -f"
+    echo "    • Restart iptsd: sudo systemctl restart iptsd"
     echo ""
 }
 
@@ -591,6 +821,10 @@ main() {
     # Configure audio optimization
     echo ""
     configure_audio_optimization
+
+    # Configure stylus support
+    echo ""
+    configure_stylus_support
 
     # Display gaming information
     echo ""
