@@ -139,76 +139,102 @@ install_surface_kernel() {
     local max_retries=3
     local retry_count=0
 
-    # Detect dnf version (dnf4 vs dnf5)
-    local dnf_version
-    dnf_version=$(dnf --version 2>/dev/null | head -1 | grep -oE '[0-9]+' | head -1)
-    log_info "Detected dnf version: $dnf_version"
+    # Check if repository is already added
+    log_info "Checking if Linux Surface repository is already configured..."
+    if dnf repolist 2>/dev/null | grep -q "linux-surface"; then
+        log_success "Linux Surface repository is already configured"
+    else
+        # Detect dnf version (dnf4 vs dnf5)
+        local dnf_version
+        dnf_version=$(dnf --version 2>/dev/null | head -1 | grep -oE '[0-9]+' | head -1)
+        log_info "Detected dnf version: $dnf_version"
 
-    while [[ $retry_count -lt $max_retries ]]; do
-        log_info "Attempting to add repository (attempt $((retry_count + 1))/$max_retries)..."
+        while [[ $retry_count -lt $max_retries ]]; do
+            log_info "Attempting to add repository (attempt $((retry_count + 1))/$max_retries)..."
 
-        local output
-        local exit_code
+            local output
+            local exit_code
 
-        # Use appropriate syntax based on dnf version
-        if [[ $dnf_version -ge 5 ]]; then
-            log_info "Using dnf5 syntax for repository addition..."
-            output=$(dnf config-manager addrepo --from-repofile="$repo_url" 2>&1)
-            exit_code=$?
-        else
-            log_info "Using dnf4 syntax for repository addition..."
-            output=$(dnf config-manager --add-repo="$repo_url" 2>&1)
-            exit_code=$?
-        fi
-
-        if [[ $exit_code -eq 0 ]]; then
-            log_success "Linux Surface repository added successfully"
-            break
-        else
-            ((retry_count++))
-            log_warn "Repository addition failed with exit code: $exit_code"
-            log_warn "Output: $output"
-
-            if [[ $retry_count -lt $max_retries ]]; then
-                log_warn "Retrying in 5 seconds (attempt $retry_count/$max_retries)..."
-                sleep 5
+            # Use appropriate syntax based on dnf version
+            if [[ $dnf_version -ge 5 ]]; then
+                log_info "Using dnf5 syntax for repository addition..."
+                output=$(timeout 30 dnf config-manager addrepo --from-repofile="$repo_url" 2>&1)
+                exit_code=$?
             else
-                log_error "Failed to add Linux Surface repository after $max_retries attempts"
-                log_error "This may be due to network issues or repository unavailability"
-                log_warn "Attempting to continue without repository (packages may not be available)"
-                return 0  # Don't fail completely, try to continue
+                log_info "Using dnf4 syntax for repository addition..."
+                output=$(timeout 30 dnf config-manager --add-repo="$repo_url" 2>&1)
+                exit_code=$?
             fi
-        fi
-    done
+
+            # Check if repository was added (exit code 0 or already exists)
+            if [[ $exit_code -eq 0 ]] || echo "$output" | grep -qi "already"; then
+                log_success "Linux Surface repository added successfully"
+                break
+            else
+                ((retry_count++))
+                log_warn "Repository addition failed with exit code: $exit_code"
+                log_warn "Output: $output"
+
+                if [[ $retry_count -lt $max_retries ]]; then
+                    log_warn "Retrying in 5 seconds (attempt $retry_count/$max_retries)..."
+                    sleep 5
+                else
+                    log_error "Failed to add Linux Surface repository after $max_retries attempts"
+                    log_error "This may be due to network issues or repository unavailability"
+                    log_warn "Attempting to continue without repository (packages may not be available)"
+                    break  # Continue anyway
+                fi
+            fi
+        done
+    fi
 
     # Install kernel and dependencies
     log_info "Installing kernel-surface, iptsd, and libwacom-surface..."
     log_info "This may take several minutes..."
 
-    if ! dnf install --allowerasing -y kernel-surface iptsd libwacom-surface 2>&1 | tee /tmp/kernel-install.log; then
-        log_error "Failed to install Surface kernel packages"
-        log_error "Check /tmp/kernel-install.log for details"
-        log_warn "Attempting to install packages individually..."
+    # Check if packages are already installed
+    local packages_to_install=""
+    command -v kernel-surface &>/dev/null || packages_to_install="kernel-surface"
+    rpm -q iptsd &>/dev/null || packages_to_install="$packages_to_install iptsd"
+    rpm -q libwacom-surface &>/dev/null || packages_to_install="$packages_to_install libwacom-surface"
 
-        # Try installing packages individually
-        dnf install -y kernel-surface 2>&1 | tail -5 || log_warn "kernel-surface installation failed"
-        dnf install -y iptsd 2>&1 | tail -5 || log_warn "iptsd installation failed"
-        dnf install -y libwacom-surface 2>&1 | tail -5 || log_warn "libwacom-surface installation failed"
+    if [[ -z "$packages_to_install" ]]; then
+        log_success "Surface kernel packages are already installed"
+    else
+        log_info "Installing packages: $packages_to_install"
+        if ! dnf install --allowerasing -y $packages_to_install 2>&1 | tee /tmp/kernel-install.log; then
+            log_error "Failed to install Surface kernel packages"
+            log_error "Check /tmp/kernel-install.log for details"
+            log_warn "Attempting to install packages individually..."
+
+            # Try installing packages individually
+            [[ "$packages_to_install" == *"kernel-surface"* ]] && dnf install -y kernel-surface 2>&1 | tail -5 || true
+            [[ "$packages_to_install" == *"iptsd"* ]] && dnf install -y iptsd 2>&1 | tail -5 || true
+            [[ "$packages_to_install" == *"libwacom-surface"* ]] && dnf install -y libwacom-surface 2>&1 | tail -5 || true
+        fi
+        log_success "Surface kernel packages installed"
     fi
-    log_success "Surface kernel packages installed"
     
     # Install secure boot support
-    log_info "Installing surface-secureboot..."
-    dnf install -y surface-secureboot >/dev/null 2>&1 || {
-        log_warn "Failed to install surface-secureboot (may not be critical)"
-    }
-    
+    if rpm -q surface-secureboot &>/dev/null; then
+        log_success "surface-secureboot is already installed"
+    else
+        log_info "Installing surface-secureboot..."
+        dnf install -y surface-secureboot >/dev/null 2>&1 || {
+            log_warn "Failed to install surface-secureboot (may not be critical)"
+        }
+    fi
+
     # Enable Surface watchdog
-    log_info "Enabling Linux Surface watchdog..."
-    systemctl enable --now linux-surface-default-watchdog.path >/dev/null 2>&1 || {
-        log_warn "Failed to enable Surface watchdog (may not be available)"
-    }
-    
+    if systemctl is-enabled linux-surface-default-watchdog.path &>/dev/null; then
+        log_success "Linux Surface watchdog is already enabled"
+    else
+        log_info "Enabling Linux Surface watchdog..."
+        systemctl enable --now linux-surface-default-watchdog.path >/dev/null 2>&1 || {
+            log_warn "Failed to enable Surface watchdog (may not be available)"
+        }
+    fi
+
     log_success "Linux Surface kernel installed successfully"
 }
 
