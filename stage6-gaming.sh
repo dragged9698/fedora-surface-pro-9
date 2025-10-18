@@ -460,22 +460,13 @@ EOF
 }
 
 configure_stylus_support() {
-    log_info "Configuring stylus support for Surface Pro (OpenTabletDriver)..."
+    log_info "Configuring stylus support for Surface Pro (osu! optimized)..."
     echo ""
 
-    # Install OpenTabletDriver (better for gaming like osu!)
-    log_info "Installing OpenTabletDriver (gaming-optimized stylus driver)..."
-    dnf copr enable -y hawkeye116477/OpenTabletDriver 2>&1 | tail -2 || {
-        log_warn "Failed to enable OpenTabletDriver COPR repository"
-    }
-    dnf install -y opentabletdriver 2>&1 | tail -3 || {
-        log_warn "Failed to install OpenTabletDriver"
-    }
-
-    # Install libwacom for fallback support
-    log_info "Installing libwacom (fallback support)..."
-    dnf install -y libwacom libwacom-data 2>&1 | tail -3 || {
-        log_warn "Failed to install libwacom"
+    # Install essential packages for stylus support
+    log_info "Installing stylus support packages..."
+    dnf install -y libwacom libwacom-data xorg-x11-apps 2>&1 | tail -3 || {
+        log_warn "Some stylus packages failed to install"
     }
 
     # Create stylus configuration directory
@@ -484,68 +475,85 @@ configure_stylus_support() {
         log_warn "Failed to create stylus config directory"
     }
 
-    # Create OpenTabletDriver configuration directory
-    log_info "Setting up OpenTabletDriver configuration..."
-    mkdir -p ~/.config/OpenTabletDriver
-    mkdir -p /etc/gaming-setup/opentabletdriver
+    log_success "Stylus support directory created"
 
-    # Create OpenTabletDriver config for gaming (osu! optimized)
-    cat > /etc/gaming-setup/opentabletdriver/gaming-profile.json << 'OTD_CONFIG'
-{
-  "Profiles": [
-    {
-      "Name": "osu! Gaming",
-      "Tablet": null,
-      "Tools": [
-        {
-          "Type": "Pen",
-          "Settings": {
-            "Pressure": 1.0,
-            "Tip Activation Threshold": 0,
-            "Tip Pressure Threshold": 0
-          }
-        }
-      ],
-      "Filters": [
-        {
-          "Type": "SmoothingFilter",
-          "Settings": {
-            "Smoothing": 0.5,
-            "Latency": 0
-          }
-        }
-      ],
-      "OutputMode": "Absolute",
-      "AbsoluteModeSettings": {
-        "Display": 0,
-        "Sensitivity": 1.0,
-        "Rotation": 0
-      }
-    }
-  ]
-}
-OTD_CONFIG
-    log_info "OpenTabletDriver gaming profile created"
+    # Configure iptsd for stylus (touchscreen + stylus support)
+    log_info "Configuring iptsd for stylus support..."
+    mkdir -p /etc/iptsd
 
-    # Enable and start OpenTabletDriver daemon
-    log_info "Enabling OpenTabletDriver daemon..."
-    systemctl enable otd-daemon 2>&1 | tail -1 || {
-        log_warn "Failed to enable otd-daemon"
+    # Create iptsd configuration optimized for gaming
+    cat > /etc/iptsd/iptsd.conf << 'IPTSD_CONFIG'
+[Device]
+# Surface Pro stylus configuration
+PressureThreshold = 5
+MaxPressure = 4095
+
+[StylusGaming]
+# Gaming-optimized stylus settings
+TipDistance = 0
+PressureThreshold = 5
+MaxPressure = 4095
+SmoothingFactor = 0.6
+LatencyCompensation = true
+IPTSD_CONFIG
+    log_success "iptsd configuration created"
+
+    # Enable and start iptsd service
+    log_info "Enabling iptsd service..."
+    systemctl enable iptsd 2>&1 | tail -1 || {
+        log_warn "Failed to enable iptsd"
     }
-    systemctl start otd-daemon 2>&1 | tail -1 || {
-        log_warn "Failed to start otd-daemon"
+    systemctl start iptsd 2>&1 | tail -1 || {
+        log_warn "Failed to start iptsd"
+    }
+    log_success "iptsd service configured"
+
+    # Download and install OpenTabletDriver RPM
+    log_info "Downloading and installing OpenTabletDriver..."
+    local otd_download_dir="/tmp/OpenTabletDriver-download"
+    mkdir -p "$otd_download_dir"
+
+    cd "$otd_download_dir" || {
+        log_warn "Failed to create download directory"
+        return 1
     }
 
-    # Create startup script for OpenTabletDriver GUI
-    log_info "Creating OpenTabletDriver startup script..."
-    cat > /usr/local/bin/start-otd << 'OTD_SCRIPT'
-#!/bin/bash
-# Start OpenTabletDriver GUI
-exec opentabletdriver &
-OTD_SCRIPT
-    chmod +x /usr/local/bin/start-otd
-    log_success "OpenTabletDriver startup script created"
-    log_success "Udev rules created and reloaded"
+    # Get latest release version
+    local otd_version="0.6.6.2"
+    local otd_rpm="OpenTabletDriver-${otd_version}-1.x86_64.rpm"
+    local otd_url="https://github.com/OpenTabletDriver/OpenTabletDriver/releases/download/${otd_version}/${otd_rpm}"
+
+    # Download RPM
+    if ! wget -q "$otd_url" -O "$otd_rpm" 2>/dev/null; then
+        log_warn "Failed to download OpenTabletDriver RPM"
+        log_info "Manual download: https://github.com/OpenTabletDriver/OpenTabletDriver/releases"
+        cd - > /dev/null
+    else
+        log_success "OpenTabletDriver RPM downloaded"
+
+        # Install RPM
+        log_info "Installing OpenTabletDriver RPM..."
+        if sudo dnf install -y "./$otd_rpm" 2>&1 | tail -3; then
+            log_success "OpenTabletDriver installed successfully"
+
+            # Update initramfs
+            log_info "Updating initramfs..."
+            sudo dracut --regenerate-all --force 2>&1 | tail -1 || {
+                log_warn "Failed to update initramfs (may not be critical)"
+            }
+
+            # Enable OpenTabletDriver daemon autostart
+            log_info "Enabling OpenTabletDriver daemon autostart..."
+            systemctl --user enable opentabletdriver.service --now 2>&1 | tail -1 || {
+                log_warn "Failed to enable OpenTabletDriver autostart"
+            }
+            log_success "OpenTabletDriver autostart enabled"
+        else
+            log_warn "Failed to install OpenTabletDriver RPM"
+        fi
+
+        cd - > /dev/null
+    fi
 
     # Create OpenTabletDriver configuration script
     log_info "Creating OpenTabletDriver configuration script..."
