@@ -139,13 +139,27 @@ install_surface_kernel() {
     local max_retries=3
     local retry_count=0
 
+    # Detect dnf version (dnf4 vs dnf5)
+    local dnf_version
+    dnf_version=$(dnf --version 2>/dev/null | head -1 | grep -oE '[0-9]+' | head -1)
+    log_info "Detected dnf version: $dnf_version"
+
     while [[ $retry_count -lt $max_retries ]]; do
         log_info "Attempting to add repository (attempt $((retry_count + 1))/$max_retries)..."
 
-        # Try to add the repository with verbose output
         local output
-        output=$(dnf config-manager --add-repo="$repo_url" 2>&1)
-        local exit_code=$?
+        local exit_code
+
+        # Use appropriate syntax based on dnf version
+        if [[ $dnf_version -ge 5 ]]; then
+            log_info "Using dnf5 syntax for repository addition..."
+            output=$(dnf config-manager addrepo --from-repofile="$repo_url" 2>&1)
+            exit_code=$?
+        else
+            log_info "Using dnf4 syntax for repository addition..."
+            output=$(dnf config-manager --add-repo="$repo_url" 2>&1)
+            exit_code=$?
+        fi
 
         if [[ $exit_code -eq 0 ]]; then
             log_success "Linux Surface repository added successfully"
