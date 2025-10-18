@@ -1702,55 +1702,6 @@ install_steam() {
     log_success "Steam installed successfully"
 }
 
-install_vscode() {
-    log_info "Installing Visual Studio Code..."
-
-    # Check if already installed
-    if rpm -q code &>/dev/null; then
-        log_success "Visual Studio Code is already installed"
-        return 0
-    fi
-
-    # Import Microsoft GPG key
-    log_info "Importing Microsoft GPG key..."
-    rpm --import https://packages.microsoft.com/keys/microsoft.asc 2>&1 | tail -2 || {
-        log_warn "Failed to import Microsoft GPG key"
-    }
-
-    # Add VSCode repository directly via repo file
-    log_info "Adding Visual Studio Code repository..."
-    cat > /etc/yum.repos.d/vscode.repo << 'EOF'
-[code]
-name=Visual Studio Code
-baseurl=https://packages.microsoft.com/yumrepos/vscode
-enabled=1
-gpgcheck=1
-gpgkey=https://packages.microsoft.com/keys/microsoft.asc
-EOF
-
-    if [[ $? -ne 0 ]]; then
-        log_warn "Failed to create VSCode repository file"
-    fi
-
-    # Refresh dnf cache
-    log_info "Refreshing package cache..."
-    dnf makecache 2>&1 | tail -2 || {
-        log_warn "Failed to refresh package cache"
-    }
-
-    # Install VS Code with verbose output for debugging
-    log_info "Installing code package..."
-    log_info "This may take a few minutes..."
-
-    if dnf install -y code 2>&1; then
-        log_success "Visual Studio Code installed successfully"
-        return 0
-    else
-        log_warn "VSCode installation completed with warnings (may still be installed)"
-        return 0
-    fi
-}
-
 install_gaming_packages() {
     log_info "Installing gaming packages for Surface Pro 9..."
     echo ""
@@ -2010,7 +1961,6 @@ main() {
     log_info "Installing essential applications..."
     install_vesktop
     install_steam
-    install_vscode
     echo ""
 
     # Optional gaming packages
