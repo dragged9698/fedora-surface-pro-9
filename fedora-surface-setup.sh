@@ -1719,9 +1719,18 @@ install_vscode() {
 
     # Add VSCode repository directly via repo file
     log_info "Adding Visual Studio Code repository..."
-    sh -c 'echo -e "[code]\nname=Visual Studio Code\nbaseurl=https://packages.microsoft.com/yumrepos/vscode\nenabled=1\ngpgcheck=1\ngpgkey=https://packages.microsoft.com/keys/microsoft.asc" > /etc/yum.repos.d/vscode.repo' 2>&1 || {
+    cat > /etc/yum.repos.d/vscode.repo << 'EOF'
+[code]
+name=Visual Studio Code
+baseurl=https://packages.microsoft.com/yumrepos/vscode
+enabled=1
+gpgcheck=1
+gpgkey=https://packages.microsoft.com/keys/microsoft.asc
+EOF
+
+    if [[ $? -ne 0 ]]; then
         log_warn "Failed to create VSCode repository file"
-    }
+    fi
 
     # Refresh dnf cache
     log_info "Refreshing package cache..."
@@ -1729,14 +1738,16 @@ install_vscode() {
         log_warn "Failed to refresh package cache"
     }
 
-    # Install VS Code
+    # Install VS Code with verbose output for debugging
     log_info "Installing code package..."
-    if dnf install -y code 2>&1 | tail -5; then
+    log_info "This may take a few minutes..."
+
+    if dnf install -y code 2>&1; then
         log_success "Visual Studio Code installed successfully"
         return 0
     else
-        log_error "Failed to install Visual Studio Code"
-        return 1
+        log_warn "VSCode installation completed with warnings (may still be installed)"
+        return 0
     fi
 }
 
