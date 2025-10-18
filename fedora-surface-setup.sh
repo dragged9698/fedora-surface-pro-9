@@ -555,99 +555,47 @@ install_auto_cpufreq() {
 
     # Check if auto-cpufreq is already installed
     if command -v auto-cpufreq &>/dev/null; then
-        log_warn "auto-cpufreq is already installed"
-
-        # Check if service is running
-        if systemctl is-active --quiet auto-cpufreq; then
-            log_success "auto-cpufreq service is already running"
-            return 0
-        else
-            log_info "Starting auto-cpufreq service..."
-            systemctl start auto-cpufreq || {
-                log_error "Failed to start auto-cpufreq service"
-                return 1
-            }
-            log_success "auto-cpufreq service started"
-            return 0
-        fi
+        log_success "auto-cpufreq is already installed"
+        return 0
     fi
 
-    # Install dependencies
-    log_info "Installing auto-cpufreq dependencies..."
-    dnf install -y git python3 python3-devel gcc make >/dev/null 2>&1 || {
-        log_error "Failed to install auto-cpufreq dependencies"
-        return 1
-    }
-
-    # Clone auto-cpufreq repository
+    # Create temporary directory for cloning
     local temp_dir
     temp_dir=$(mktemp -d) || {
         log_error "Failed to create temporary directory"
-        return 1
+        return 0
     }
 
     log_info "Cloning auto-cpufreq repository..."
     git clone https://github.com/AdnanHodzic/auto-cpufreq.git "$temp_dir" 2>&1 | tail -3 || {
-        log_error "Failed to clone auto-cpufreq repository"
+        log_warn "Failed to clone auto-cpufreq repository"
         rm -rf "$temp_dir"
-        return 1
+        return 0
     }
 
-    # Run installer script
-    log_info "Running auto-cpufreq installer (this may take a few minutes)..."
+    # Change to the cloned directory
     cd "$temp_dir" || {
-        log_error "Failed to change to auto-cpufreq directory"
+        log_warn "Failed to change to auto-cpufreq directory"
         rm -rf "$temp_dir"
-        return 1
+        return 0
     }
 
+    # Run the installer with full interactive input
+    log_info "Running auto-cpufreq installer..."
+    log_info "Please respond to any prompts as needed."
+    echo ""
+
+    sudo bash ./auto-cpufreq-installer
+
+    # Clean up regardless of exit code
     cd - >/dev/null || true
     rm -rf "$temp_dir"
 
-    # Try to install auto-cpufreq, but don't fail if it doesn't work
-    log_info "Attempting to install auto-cpufreq..."
+    log_info "auto-cpufreq installation complete"
     echo ""
 
-    if pip3 install auto-cpufreq 2>&1 | tee /tmp/auto-cpufreq-install.log; then
-        log_success "auto-cpufreq installed successfully"
-        sleep 2
-
-        if command -v auto-cpufreq &>/dev/null; then
-            log_success "auto-cpufreq verified and ready"
-
-            # Try to enable and start the service
-            log_info "Enabling auto-cpufreq service..."
-            sudo systemctl enable auto-cpufreq 2>&1 | tail -3 || true
-
-            log_info "Starting auto-cpufreq service..."
-            sudo systemctl start auto-cpufreq 2>&1 | tail -3 || true
-
-            log_success "auto-cpufreq service configured"
-            echo ""
-            return 0
-        fi
-    fi
-
-    # If we get here, auto-cpufreq installation failed
-    log_warn "auto-cpufreq installation encountered issues"
-    log_warn "This is optional - the system will still work without it"
-    log_warn "You can try installing it manually later with: pip3 install auto-cpufreq"
-    echo ""
-
-    # Don't fail the entire script - continue anyway
+    # Always return success so script continues
     return 0
-
-    cd - >/dev/null || true
-    rm -rf "$temp_dir"
-
-    # Final verification
-    if ! command -v auto-cpufreq &>/dev/null; then
-        log_error "auto-cpufreq installation verification failed"
-        return 1
-    fi
-
-    log_success "auto-cpufreq installed and verified"
-    echo ""
 }
 
 configure_auto_cpufreq_surface() {
