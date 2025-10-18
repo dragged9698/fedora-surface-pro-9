@@ -601,6 +601,11 @@ install_auto_cpufreq() {
         return 1
     }
 
+    # Clean up any existing bad config files before installation
+    log_info "Cleaning up existing auto-cpufreq config files..."
+    sudo rm -f /etc/auto-cpufreq.conf 2>/dev/null || true
+    sudo rm -f ~/.config/auto-cpufreq.conf 2>/dev/null || true
+
     # Install auto-cpufreq via pip (most reliable method)
     log_info "Installing auto-cpufreq via pip..."
     echo ""
