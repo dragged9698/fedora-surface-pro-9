@@ -279,80 +279,38 @@ install_gaming_packages() {
 }
 
 install_advanced_gaming_packages() {
-    log_info "Installing advanced gaming packages and tools..."
+    log_info "Installing advanced gaming packages and tools (optional)..."
     echo ""
 
-    # DXVK (Direct3D 11/12 to Vulkan translation)
-    log_info "Installing DXVK (Direct3D to Vulkan)..."
-    dnf copr enable -y @gaming/dxvk 2>&1 | tail -2 || {
-        log_warn "Failed to enable DXVK COPR repository"
-    }
-    dnf install -y dxvk 2>&1 | tail -3 || {
-        log_warn "DXVK not available (Proton includes fallback)"
-    }
+    # Note: COPR repositories for @gaming/* are not available for Fedora 42
+    # These are optional packages - failures are non-critical
 
-    # VKD3D (Direct3D 12 to Vulkan)
+    # VKD3D (Direct3D 12 to Vulkan) - try standard repo first
     log_info "Installing VKD3D (Direct3D 12 to Vulkan)..."
-    dnf install -y vkd3d vkd3d.i686 2>&1 | tail -3 || {
-        log_warn "Failed to install VKD3D"
-    }
-
-    # D9VK (Direct3D 9 to Vulkan)
-    log_info "Installing D9VK (Direct3D 9 to Vulkan)..."
-    dnf copr enable -y @gaming/d9vk 2>&1 | tail -2 || {
-        log_warn "Failed to enable D9VK COPR repository"
-    }
-    dnf install -y d9vk 2>&1 | tail -3 || {
-        log_warn "D9VK not available (Proton includes fallback)"
-    }
-
-    # Heroic Launcher (Epic Games & GOG launcher)
-    log_info "Installing Heroic Launcher..."
-    dnf copr enable -y @gaming/heroic 2>&1 | tail -2 || {
-        log_warn "Failed to enable Heroic COPR repository"
-    }
-    dnf install -y heroic-games-launcher 2>&1 | tail -3 || {
-        log_warn "Heroic Launcher not available"
+    dnf install -y vkd3d 2>&1 | tail -3 || {
+        log_warn "VKD3D not available (optional - Proton includes fallback)"
     }
 
     # Bottles (Windows app/game runner)
     log_info "Installing Bottles..."
     dnf install -y bottles 2>&1 | tail -3 || {
-        log_warn "Failed to install Bottles"
-    }
-
-    # GameHub (unified game launcher)
-    log_info "Installing GameHub..."
-    dnf copr enable -y @gaming/gamehub 2>&1 | tail -2 || {
-        log_warn "Failed to enable GameHub COPR repository"
-    }
-    dnf install -y gamehub 2>&1 | tail -3 || {
-        log_warn "GameHub not available"
-    }
-
-    # Proton-GE (community Proton builds)
-    log_info "Installing Proton-GE support..."
-    dnf copr enable -y @gaming/proton-ge 2>&1 | tail -2 || {
-        log_warn "Failed to enable Proton-GE COPR repository"
-    }
-    dnf install -y proton-ge 2>&1 | tail -3 || {
-        log_warn "Proton-GE not available (can be installed via ProtonUp-Qt)"
+        log_warn "Bottles not available (optional)"
     }
 
     # Input device tools
     log_info "Installing input device tools..."
     dnf install -y jstest-gtk evtest joystick 2>&1 | tail -3 || {
-        log_warn "Failed to install input device tools"
+        log_warn "Some input device tools not available (optional)"
     }
 
     # Additional codec support
     log_info "Installing additional codec support..."
-    dnf install -y ffmpeg ffmpeg-libs 2>&1 | tail -3 || {
-        log_warn "Failed to install ffmpeg"
+    dnf install -y ffmpeg 2>&1 | tail -3 || {
+        log_warn "FFmpeg not available (optional)"
     }
 
     echo ""
-    log_success "Advanced gaming packages installation complete"
+    log_success "Advanced gaming packages installation complete (some optional packages may have been skipped)"
     return 0
 }
 
@@ -400,11 +358,10 @@ EOF
 # Gaming performance kernel parameters
 vm.max_map_count = 2147483642
 vm.swappiness = 10
-kernel.sched_migration_cost_ns = 5000000
 kernel.sched_autogroup_enabled = 0
 EOF
     sysctl -p /etc/sysctl.d/99-gaming.conf 2>&1 | tail -3 || {
-        log_warn "Failed to apply kernel parameters"
+        log_warn "Failed to apply kernel parameters (some may not be supported)"
     }
 
     echo ""
@@ -498,15 +455,20 @@ LatencyCompensation = true
 IPTSD_CONFIG
     log_success "iptsd configuration created"
 
-    # Enable and start iptsd service
-    log_info "Enabling iptsd service..."
-    systemctl enable iptsd 2>&1 | tail -1 || {
-        log_warn "Failed to enable iptsd"
-    }
-    systemctl start iptsd 2>&1 | tail -1 || {
-        log_warn "Failed to start iptsd"
-    }
-    log_success "iptsd service configured"
+    # Enable and start iptsd service (if available)
+    log_info "Configuring iptsd service..."
+    if systemctl list-unit-files 2>/dev/null | grep -q "iptsd.service"; then
+        log_info "Enabling iptsd service..."
+        systemctl enable iptsd 2>&1 | tail -1 || {
+            log_warn "Failed to enable iptsd"
+        }
+        systemctl start iptsd 2>&1 | tail -1 || {
+            log_warn "Failed to start iptsd (service may not be available)"
+        }
+        log_success "iptsd service configured"
+    else
+        log_warn "iptsd service not available (will use OpenTabletDriver for stylus)"
+    fi
 
     # Download and install OpenTabletDriver RPM
     log_info "Downloading and installing OpenTabletDriver..."
@@ -738,10 +700,10 @@ display_gaming_info() {
     echo "  ╔════════════════════════════════════════════════════════════╗"
     echo "  ║  GRAPHICS & COMPATIBILITY                                 ║"
     echo "  ╚════════════════════════════════════════════════════════════╝"
-    echo "    ✓ DXVK (Direct3D 11/12 to Vulkan)"
     echo "    ✓ VKD3D (Direct3D 12 to Vulkan)"
-    echo "    ✓ D9VK (Direct3D 9 to Vulkan)"
-    echo "    ✓ Proton-GE (community Proton builds)"
+    echo "    ✓ Proton (Steam's compatibility layer)"
+    echo "    ✓ Wine (Windows compatibility)"
+    echo "    ✓ Mesa Vulkan drivers (32/64-bit)"
     echo ""
     echo "  ╔════════════════════════════════════════════════════════════╗"
     echo "  ║  CONTROLLER & INPUT SUPPORT                               ║"
