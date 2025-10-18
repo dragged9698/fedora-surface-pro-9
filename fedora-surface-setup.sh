@@ -548,7 +548,7 @@ install_auto_cpufreq() {
 
     # Install dependencies
     log_info "Installing auto-cpufreq dependencies..."
-    dnf install -y git python3 python3-devel >/dev/null 2>&1 || {
+    dnf install -y git python3 python3-devel gcc make >/dev/null 2>&1 || {
         log_error "Failed to install auto-cpufreq dependencies"
         return 1
     }
@@ -561,26 +561,35 @@ install_auto_cpufreq() {
     }
 
     log_info "Cloning auto-cpufreq repository..."
-    git clone https://github.com/AdnanHodzic/auto-cpufreq.git "$temp_dir" >/dev/null 2>&1 || {
+    git clone https://github.com/AdnanHodzic/auto-cpufreq.git "$temp_dir" 2>&1 | tail -3 || {
         log_error "Failed to clone auto-cpufreq repository"
         rm -rf "$temp_dir"
         return 1
     }
 
     # Run installer script
-    log_info "Running auto-cpufreq installer..."
+    log_info "Running auto-cpufreq installer (this may take a few minutes)..."
     cd "$temp_dir" || {
         log_error "Failed to change to auto-cpufreq directory"
         rm -rf "$temp_dir"
         return 1
     }
 
-    sudo python3 installer.py install >/dev/null 2>&1 || {
-        log_error "Failed to install auto-cpufreq"
+    # Run the auto-cpufreq-installer script
+    if [[ -f "./auto-cpufreq-installer" ]]; then
+        log_info "Using auto-cpufreq-installer script..."
+        sudo bash ./auto-cpufreq-installer 2>&1 | tail -10 || {
+            log_error "Failed to run auto-cpufreq-installer"
+            cd - >/dev/null || true
+            rm -rf "$temp_dir"
+            return 1
+        }
+    else
+        log_error "auto-cpufreq-installer script not found"
         cd - >/dev/null || true
         rm -rf "$temp_dir"
         return 1
-    }
+    fi
 
     cd - >/dev/null || true
     rm -rf "$temp_dir"
