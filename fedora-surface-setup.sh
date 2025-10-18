@@ -601,83 +601,67 @@ install_auto_cpufreq() {
         return 1
     }
 
-    # Run the auto-cpufreq-installer script
-    if [[ -f "./auto-cpufreq-installer" ]]; then
-        log_info "Using auto-cpufreq-installer script..."
-        log_info "Running installer (this may take a few minutes)..."
-        echo ""
+    # Run the official auto-cpufreq-installer bash script
+    log_info "Running auto-cpufreq-installer (this may take a few minutes)..."
+    echo ""
 
-        # Run installer with interactive input allowed
-        # Use 'yes' to automatically answer 'y' to any prompts
+    if [[ -f "./auto-cpufreq-installer" ]]; then
+        log_info "Using official auto-cpufreq-installer script..."
+
+        # Run with yes to auto-answer prompts
         if yes | sudo bash ./auto-cpufreq-installer 2>&1 | tee /tmp/auto-cpufreq-install.log; then
-            log_success "auto-cpufreq-installer completed successfully"
+            log_success "auto-cpufreq installed successfully"
         else
             local exit_code=$?
             log_warn "auto-cpufreq-installer exited with code: $exit_code"
 
-            # Check if it's just a configuration warning
-            if grep -qi "unknown key\|warning" /tmp/auto-cpufreq-install.log; then
-                log_warn "Installer reported warnings but may have completed"
-                log_info "Checking if auto-cpufreq was installed..."
-
-                # Give it a moment to finish
-                sleep 2
-
-                # Check if auto-cpufreq is actually installed
-                if command -v auto-cpufreq &>/dev/null; then
-                    log_success "auto-cpufreq is installed despite warnings"
-                else
-                    log_error "auto-cpufreq installation failed"
-                    log_error "Check /tmp/auto-cpufreq-install.log for details"
-                    tail -20 /tmp/auto-cpufreq-install.log | sed 's/^/  /'
-                    cd - >/dev/null || true
-                    rm -rf "$temp_dir"
-                    return 1
-                fi
+            # Check if auto-cpufreq was actually installed despite exit code
+            sleep 2
+            if command -v auto-cpufreq &>/dev/null; then
+                log_success "auto-cpufreq installed successfully"
             else
-                log_error "Failed to run auto-cpufreq-installer"
-                log_error "Check /tmp/auto-cpufreq-install.log for details"
-                tail -20 /tmp/auto-cpufreq-install.log | sed 's/^/  /'
+                log_warn "auto-cpufreq-installer failed, trying pip installation as fallback..."
                 cd - >/dev/null || true
                 rm -rf "$temp_dir"
+
+                if pip3 install auto-cpufreq 2>&1 | tail -5; then
+                    sleep 2
+                    if command -v auto-cpufreq &>/dev/null; then
+                        log_success "auto-cpufreq installed via pip (fallback)"
+                        return 0
+                    fi
+                fi
                 return 1
             fi
         fi
 
         echo ""
     else
-        log_error "auto-cpufreq-installer script not found"
+        log_error "auto-cpufreq-installer script not found in repository"
+        log_warn "Trying pip installation as fallback..."
         cd - >/dev/null || true
         rm -rf "$temp_dir"
+
+        if pip3 install auto-cpufreq 2>&1 | tail -5; then
+            sleep 2
+            if command -v auto-cpufreq &>/dev/null; then
+                log_success "auto-cpufreq installed via pip (fallback)"
+                return 0
+            fi
+        fi
         return 1
     fi
 
     cd - >/dev/null || true
     rm -rf "$temp_dir"
 
-    # Verify installation
+    # Final verification
     if ! command -v auto-cpufreq &>/dev/null; then
-        log_warn "auto-cpufreq not found in PATH, attempting fallback installation..."
-
-        # Try installing from pip as fallback
-        log_info "Attempting to install auto-cpufreq via pip..."
-        if pip3 install auto-cpufreq 2>&1 | tail -5; then
-            log_info "Waiting for pip installation to complete..."
-            sleep 2
-
-            if command -v auto-cpufreq &>/dev/null; then
-                log_success "auto-cpufreq installed via pip"
-            else
-                log_error "auto-cpufreq installation verification failed"
-                return 1
-            fi
-        else
-            log_error "auto-cpufreq installation verification failed"
-            return 1
-        fi
+        log_error "auto-cpufreq installation verification failed"
+        return 1
     fi
 
-    log_success "auto-cpufreq installed successfully"
+    log_success "auto-cpufreq installed and verified"
     echo ""
 }
 
