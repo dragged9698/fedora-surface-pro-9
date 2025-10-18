@@ -587,11 +587,37 @@ install_auto_cpufreq() {
 
     sudo bash ./auto-cpufreq-installer
 
-    # Clean up regardless of exit code
+    # Clean up temporary directory
     cd - >/dev/null || true
     rm -rf "$temp_dir"
 
-    log_info "auto-cpufreq installation complete"
+    # Install and enable the daemon
+    log_info "Installing auto-cpufreq daemon service..."
+    if sudo auto-cpufreq --install 2>&1 | tail -5; then
+        log_success "auto-cpufreq daemon installed"
+    else
+        log_warn "auto-cpufreq daemon installation may have encountered issues"
+    fi
+
+    echo ""
+
+    # Verify installation
+    if command -v auto-cpufreq &>/dev/null; then
+        log_success "auto-cpufreq binary verified"
+
+        # Check service status
+        log_info "Checking auto-cpufreq service status..."
+        if systemctl is-active --quiet auto-cpufreq; then
+            log_success "auto-cpufreq service is running"
+        else
+            log_warn "auto-cpufreq service is not running"
+            log_info "Attempting to start service..."
+            sudo systemctl start auto-cpufreq 2>&1 | tail -3 || true
+        fi
+    else
+        log_warn "auto-cpufreq binary not found"
+    fi
+
     echo ""
 
     # Always return success so script continues
