@@ -46,6 +46,29 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $*" >&2
 }
 
+# Progress tracking
+CURRENT_STEP=0
+TOTAL_STEPS=0
+
+set_total_steps() {
+    TOTAL_STEPS=$1
+}
+
+progress_step() {
+    ((CURRENT_STEP++))
+    local step_desc="$1"
+    echo ""
+    echo -e "${BLUE}[STEP $CURRENT_STEP/$TOTAL_STEPS]${NC} $step_desc"
+}
+
+show_progress() {
+    local current=$1
+    local total=$2
+    local message="$3"
+    local percent=$((current * 100 / total))
+    echo -ne "\r${BLUE}[${percent}%]${NC} $message"
+}
+
 # ============================================================================
 # PREREQUISITE CHECKS
 # ============================================================================
@@ -109,20 +132,37 @@ update_system() {
 
 install_surface_kernel() {
     log_info "Installing Linux Surface kernel..."
-    
-    # Add Linux Surface repository
+
+    # Add Linux Surface repository with retry logic
     log_info "Adding Linux Surface repository..."
-    dnf config-manager --add-repo=https://pkg.surfacelinux.com/fedora/linux-surface.repo >/dev/null 2>&1 || {
-        log_error "Failed to add Linux Surface repository"
-        return 1
-    }
-    
+    local repo_url="https://pkg.surfacelinux.com/fedora/linux-surface.repo"
+    local max_retries=3
+    local retry_count=0
+
+    while [[ $retry_count -lt $max_retries ]]; do
+        if dnf config-manager --add-repo="$repo_url" >/dev/null 2>&1; then
+            log_success "Linux Surface repository added successfully"
+            break
+        else
+            ((retry_count++))
+            if [[ $retry_count -lt $max_retries ]]; then
+                log_warn "Failed to add repository (attempt $retry_count/$max_retries). Retrying in 5 seconds..."
+                sleep 5
+            else
+                log_error "Failed to add Linux Surface repository after $max_retries attempts"
+                return 1
+            fi
+        fi
+    done
+
     # Install kernel and dependencies
     log_info "Installing kernel-surface, iptsd, and libwacom-surface..."
-    dnf install --allowerasing -y kernel-surface iptsd libwacom-surface >/dev/null 2>&1 || {
+    dnf install --allowerasing -y kernel-surface iptsd libwacom-surface 2>&1 | grep -E "^(Installing|Updating|Removing|Downgrading)" || true
+
+    if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
         log_error "Failed to install Surface kernel packages"
         return 1
-    }
+    fi
     
     # Install secure boot support
     log_info "Installing surface-secureboot..."
@@ -370,6 +410,80 @@ EOF
     }
 
     log_success "iptsd touchscreen configured"
+}
+
+# ============================================================================
+# REFIND BOOTLOADER INSTALLATION
+# ============================================================================
+
+install_refind() {
+    log_info "Installing rEFInd bootloader..."
+
+    # Check if rEFInd is already installed
+    if [[ -d /boot/efi/EFI/refind ]]; then
+        log_warn "rEFInd is already installed"
+        return 0
+    fi
+
+    # Install rEFInd package
+    log_info "Installing rEFInd package..."
+    dnf install -y refind 2>&1 | grep -E "^(Installing|Updating)" || true
+
+    if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
+        log_error "Failed to install rEFInd package"
+        return 1
+    fi
+
+    log_success "rEFInd package installed"
+}
+
+configure_refind_theme() {
+    log_info "Configuring rEFInd with nils theme..."
+
+    local refind_dir="/boot/efi/EFI/refind"
+    local themes_dir="$refind_dir/themes"
+
+    # Create themes directory if it doesn't exist
+    if [[ ! -d "$themes_dir" ]]; then
+        mkdir -p "$themes_dir" || {
+            log_error "Failed to create rEFInd themes directory"
+            return 1
+        }
+    fi
+
+    # Check if nils theme is already installed
+    if [[ -d "$themes_dir/rEFInd-nils" ]]; then
+        log_warn "rEFInd-nils theme is already installed"
+    else
+        log_info "Downloading rEFInd-nils theme..."
+
+        # Clone the theme repository
+        cd "$themes_dir" || return 1
+        git clone https://github.com/NilsPvR/rEFInd-nils.git >/dev/null 2>&1 || {
+            log_warn "Failed to download rEFInd-nils theme (git may not be installed)"
+            cd - >/dev/null
+            return 0
+        }
+        cd - >/dev/null
+
+        log_success "rEFInd-nils theme installed"
+    fi
+
+    # Update refind.conf to use the nils theme
+    local refind_conf="$refind_dir/refind.conf"
+    if [[ -f "$refind_conf" ]]; then
+        # Check if theme is already configured
+        if ! grep -q "include themes/rEFInd-nils" "$refind_conf"; then
+            log_info "Configuring rEFInd to use nils theme..."
+
+            # Add theme configuration
+            echo "" >> "$refind_conf"
+            echo "# rEFInd-nils theme configuration" >> "$refind_conf"
+            echo "include themes/rEFInd-nils/theme.conf" >> "$refind_conf"
+
+            log_success "rEFInd theme configuration updated"
+        fi
+    fi
 }
 
 # ============================================================================
@@ -1052,6 +1166,184 @@ apply_cachyos_optimizations() {
 }
 
 # ============================================================================
+# ADDITIONAL PERFORMANCE OPTIMIZATIONS (TIER 1 & 2)
+# ============================================================================
+
+apply_gaming_tweaks() {
+    log_info "Applying gaming performance tweaks..."
+
+    local gaming_conf="/etc/sysctl.d/99-gaming-tweaks.conf"
+
+    if [[ -f "$gaming_conf" ]]; then
+        log_warn "Gaming tweaks already applied"
+        return 0
+    fi
+
+    log_info "Creating gaming performance configuration..."
+    cat > "$gaming_conf" << 'EOF'
+# Gaming Performance Tweaks
+# Disable split lock mitigate for better gaming performance
+kernel.split_lock_mitigate=0
+EOF
+
+    # Apply sysctl settings
+    sysctl -p "$gaming_conf" >/dev/null 2>&1 || {
+        log_error "Failed to apply gaming tweaks"
+        return 1
+    }
+
+    log_success "Gaming performance tweaks applied"
+}
+
+apply_adios_scheduler() {
+    log_info "Configuring ADIOS I/O scheduler..."
+
+    local io_rules="/etc/udev/rules.d/60-ioschedulers.conf"
+
+    if grep -q "adios" "$io_rules" 2>/dev/null; then
+        log_warn "ADIOS scheduler already configured"
+        return 0
+    fi
+
+    log_info "Updating I/O scheduler rules to use ADIOS..."
+
+    # Backup existing rules
+    if [[ -f "$io_rules" ]]; then
+        cp "$io_rules" "${io_rules}.backup.$(date +%s)"
+    fi
+
+    # Update NVMe rules to use ADIOS
+    sed -i 's/scheduler}="none"/scheduler}="adios"/g' "$io_rules" 2>/dev/null || true
+
+    # Reload udev rules
+    udevadm control --reload-rules >/dev/null 2>&1
+    udevadm trigger >/dev/null 2>&1
+
+    log_success "ADIOS I/O scheduler configured"
+}
+
+apply_rcu_lazy() {
+    log_info "Enabling RCU Lazy for power management..."
+
+    local grub_file="/etc/default/grub"
+
+    if grep -q "rcutree.enable_rcu_lazy=1" "$grub_file"; then
+        log_warn "RCU Lazy already enabled"
+        return 0
+    fi
+
+    log_info "Adding RCU Lazy kernel parameter..."
+
+    # Backup GRUB configuration
+    cp "$grub_file" "${grub_file}.backup.rcu.$(date +%s)"
+
+    # Add RCU Lazy parameter
+    sed -i 's/GRUB_CMDLINE_LINUX="/GRUB_CMDLINE_LINUX="rcutree.enable_rcu_lazy=1 /' "$grub_file"
+
+    # Regenerate GRUB configuration
+    grub2-mkconfig -o /boot/grub2/grub.cfg >/dev/null 2>&1 || {
+        log_warn "Failed to regenerate GRUB configuration"
+    }
+
+    log_success "RCU Lazy enabled (requires reboot)"
+}
+
+install_multimedia_codecs() {
+    log_info "Installing multimedia codecs and hardware acceleration..."
+
+    # Check if already installed
+    if rpm -q gstreamer1-plugins-good >/dev/null 2>&1; then
+        log_warn "Multimedia codecs already installed"
+        return 0
+    fi
+
+    log_info "Installing gstreamer plugins and ffmpeg..."
+    dnf install -y \
+        gstreamer1-plugins-good \
+        gstreamer1-plugins-bad-free \
+        gstreamer1-plugins-ugly-free \
+        gstreamer1-libav \
+        ffmpeg \
+        2>&1 | grep -E "^(Installing|Updating)" || true
+
+    if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
+        log_error "Failed to install multimedia codecs"
+        return 1
+    fi
+
+    log_success "Multimedia codecs installed"
+}
+
+enable_hardware_video_acceleration() {
+    log_info "Enabling hardware video acceleration..."
+
+    # Check if already installed
+    if rpm -q libva-intel-driver >/dev/null 2>&1; then
+        log_warn "Hardware video acceleration already enabled"
+        return 0
+    fi
+
+    log_info "Installing Intel hardware acceleration drivers..."
+    dnf install -y libva-intel-driver intel-media-driver 2>&1 | grep -E "^(Installing|Updating)" || true
+
+    if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
+        log_warn "Failed to install hardware acceleration drivers"
+        return 0
+    fi
+
+    # Create hardware acceleration profile
+    local hw_accel_profile="/etc/profile.d/hardware-acceleration.sh"
+    if [[ ! -f "$hw_accel_profile" ]]; then
+        cat > "$hw_accel_profile" << 'EOF'
+# Hardware Video Acceleration
+export LIBVA_DRIVER_NAME=iHD
+export VDPAU_DRIVER=va_gl
+EOF
+        chmod 644 "$hw_accel_profile"
+    fi
+
+    log_success "Hardware video acceleration enabled"
+}
+
+apply_gnome_tweaks() {
+    log_info "Applying GNOME performance tweaks..."
+
+    # Check if GNOME is installed
+    if ! command -v gsettings &>/dev/null; then
+        log_warn "GNOME not detected, skipping GNOME tweaks"
+        return 0
+    fi
+
+    log_info "Disabling GNOME animations for better responsiveness..."
+
+    # Disable animations
+    gsettings set org.gnome.desktop.interface enable-animations false 2>/dev/null || true
+    gsettings set org.gnome.desktop.wm.preferences enable-animations false 2>/dev/null || true
+
+    log_success "GNOME performance tweaks applied"
+}
+
+install_audio_enhancements() {
+    log_info "Installing audio enhancement tools..."
+
+    # Check if already installed
+    if rpm -q easyeffects >/dev/null 2>&1; then
+        log_warn "Audio enhancement tools already installed"
+        return 0
+    fi
+
+    log_info "Installing EasyEffects and audio plugins..."
+    dnf install -y easyeffects lsp-plugins-lv2 zam-plugins calf mda-lv2 2>&1 | grep -E "^(Installing|Updating)" || true
+
+    if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
+        log_warn "Failed to install audio enhancement tools"
+        return 0
+    fi
+
+    log_success "Audio enhancement tools installed"
+}
+
+# ============================================================================
 # SURFACE PRO 9 SPECIFIC FIXES
 # ============================================================================
 
@@ -1321,6 +1613,12 @@ main() {
     configure_iptsd
     echo ""
 
+    # rEFInd bootloader installation
+    log_info "Installing rEFInd bootloader..."
+    install_refind
+    configure_refind_theme
+    echo ""
+
     # auto-cpufreq installation and configuration
     log_info "Starting auto-cpufreq installation and configuration..."
     install_auto_cpufreq
@@ -1332,6 +1630,17 @@ main() {
     # CachyOS performance optimizations
     log_info "Starting CachyOS performance optimizations..."
     apply_cachyos_optimizations
+    echo ""
+
+    # Additional performance optimizations (Tier 1 & 2)
+    log_info "Applying additional performance optimizations..."
+    apply_gaming_tweaks
+    apply_adios_scheduler
+    apply_rcu_lazy
+    install_multimedia_codecs
+    enable_hardware_video_acceleration
+    apply_gnome_tweaks
+    install_audio_enhancements
     echo ""
 
     # Essential applications
@@ -1356,18 +1665,35 @@ main() {
     log_success "All components installed successfully"
     echo ""
     echo -e "${BLUE}Installed Components:${NC}"
+    echo ""
+    echo -e "${BLUE}Core Components:${NC}"
     echo "  ✓ Linux Surface Kernel"
     echo "  ✓ Surface Hardware Configuration"
     echo "  ✓ iptsd Touchscreen Configuration"
+    echo "  ✓ rEFInd Bootloader with nils Theme"
+    echo ""
+    echo -e "${BLUE}Performance Optimizations:${NC}"
     echo "  ✓ auto-cpufreq (CPU Frequency Scaling)"
-    echo "  ✓ CachyOS Performance Optimizations"
+    echo "  ✓ CachyOS Performance Optimizations (50+ tweaks)"
+    echo "  ✓ Gaming Performance Tweaks (Split Lock Mitigate)"
+    echo "  ✓ ADIOS I/O Scheduler (NVMe Responsiveness)"
+    echo "  ✓ RCU Lazy (Power Management)"
+    echo "  ✓ Multimedia Codecs & Hardware Acceleration"
+    echo "  ✓ GNOME Performance Tweaks"
+    echo "  ✓ Audio Enhancement Tools (EasyEffects)"
+    echo ""
+    echo -e "${BLUE}System Fixes:${NC}"
     echo "  ✓ Surface Pro 9 Specific Fixes"
+    echo "  ✓ Hibernation Configuration"
+    echo ""
+    echo -e "${BLUE}Essential Applications:${NC}"
     echo "  ✓ Vesktop (Discord Client)"
     echo "  ✓ Steam (Gaming Platform)"
     echo "  ✓ Visual Studio Code"
     echo ""
     echo -e "${YELLOW}IMPORTANT: A system reboot is required to complete the installation.${NC}"
-    echo -e "${YELLOW}The Linux Surface kernel and auto-cpufreq will be active after reboot.${NC}"
+    echo -e "${YELLOW}The Linux Surface kernel, rEFInd, and auto-cpufreq will be active after reboot.${NC}"
+    echo -e "${YELLOW}RCU Lazy kernel parameter requires reboot to take effect.${NC}"
     echo ""
     
     read -p "Reboot now? (y/n) " -n 1 -r
