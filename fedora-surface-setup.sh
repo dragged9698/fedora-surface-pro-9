@@ -593,15 +593,27 @@ install_auto_cpufreq() {
 
     # Install and enable the daemon
     log_info "Installing auto-cpufreq daemon service..."
-    if sudo auto-cpufreq --install 2>&1 | tail -5; then
-        log_success "auto-cpufreq daemon installed"
+    log_info "Running: auto-cpufreq --install"
+    echo ""
+
+    # Run the install command directly (don't use sudo if already root)
+    auto-cpufreq --install 2>&1 | tee /tmp/auto-cpufreq-daemon-install.log
+    local install_exit=$?
+
+    echo ""
+
+    if [[ $install_exit -eq 0 ]]; then
+        log_success "auto-cpufreq daemon installed successfully"
     else
-        log_warn "auto-cpufreq daemon installation may have encountered issues"
+        log_warn "auto-cpufreq --install exited with code: $install_exit"
+        log_info "Checking installation log: /tmp/auto-cpufreq-daemon-install.log"
     fi
 
     echo ""
 
     # Verify installation
+    sleep 2
+
     if command -v auto-cpufreq &>/dev/null; then
         log_success "auto-cpufreq binary verified"
 
@@ -612,7 +624,15 @@ install_auto_cpufreq() {
         else
             log_warn "auto-cpufreq service is not running"
             log_info "Attempting to start service..."
-            sudo systemctl start auto-cpufreq 2>&1 | tail -3 || true
+            systemctl start auto-cpufreq 2>&1 | tail -3 || true
+
+            # Check again
+            sleep 1
+            if systemctl is-active --quiet auto-cpufreq; then
+                log_success "auto-cpufreq service started successfully"
+            else
+                log_warn "auto-cpufreq service still not running"
+            fi
         fi
     else
         log_warn "auto-cpufreq binary not found"
@@ -1368,21 +1388,85 @@ EOF
 }
 
 apply_gnome_tweaks() {
-    log_info "Applying GNOME performance tweaks..."
+    log_info "Applying GNOME desktop customizations..."
+    echo ""
 
     # Check if GNOME is installed
     if ! command -v gsettings &>/dev/null; then
-        log_warn "GNOME not detected, skipping GNOME tweaks"
+        log_warn "GNOME not detected, skipping GNOME customizations"
         return 0
     fi
 
-    log_info "Disabling GNOME animations for better responsiveness..."
+    # Install gnome-tweaks if not already installed
+    if ! rpm -q gnome-tweaks &>/dev/null; then
+        log_info "Installing gnome-tweaks package..."
+        dnf install -y gnome-tweaks 2>&1 | tail -3 || {
+            log_warn "Failed to install gnome-tweaks"
+        }
+    else
+        log_success "gnome-tweaks is already installed"
+    fi
 
-    # Disable animations
-    gsettings set org.gnome.desktop.interface enable-animations false 2>/dev/null || true
-    gsettings set org.gnome.desktop.wm.preferences enable-animations false 2>/dev/null || true
+    echo ""
+    log_info "Configuring GNOME desktop settings..."
 
-    log_success "GNOME performance tweaks applied"
+    # Restore window control buttons (minimize, maximize, close)
+    log_info "Restoring window control buttons..."
+    gsettings set org.gnome.desktop.wm.preferences button-layout ':minimize,maximize,close' 2>/dev/null || true
+
+    # Interface improvements
+    log_info "Configuring interface settings..."
+    gsettings set org.gnome.desktop.interface show-battery-percentage true 2>/dev/null || true
+    gsettings set org.gnome.desktop.interface clock-format '12h' 2>/dev/null || true
+
+    # Mouse and touchpad settings
+    log_info "Configuring mouse and touchpad..."
+    gsettings set org.gnome.desktop.peripherals.mouse accel-profile 'flat' 2>/dev/null || true
+    gsettings set org.gnome.desktop.peripherals.mouse natural-scroll true 2>/dev/null || true
+
+    # Disable hot corners (better for touchscreen)
+    log_info "Disabling hot corners (better for touchscreen)..."
+    gsettings set org.gnome.desktop.interface enable-hot-corners false 2>/dev/null || true
+
+    # Mutter window manager improvements
+    log_info "Configuring window manager..."
+    gsettings set org.gnome.mutter dynamic-workspaces true 2>/dev/null || true
+    gsettings set org.gnome.mutter edge-tiling true 2>/dev/null || true
+
+    # Night light settings
+    log_info "Enabling night light..."
+    gsettings set org.gnome.settings-daemon.plugins.color night-light-enabled true 2>/dev/null || true
+    gsettings set org.gnome.settings-daemon.plugins.color night-light-schedule-automatic true 2>/dev/null || true
+
+    # Power management
+    log_info "Configuring power management..."
+    gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-timeout 1800 2>/dev/null || true
+    gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type 'suspend' 2>/dev/null || true
+    gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-battery-timeout 900 2>/dev/null || true
+    gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-battery-type 'suspend' 2>/dev/null || true
+
+    # Privacy settings
+    log_info "Configuring privacy settings..."
+    gsettings set org.gnome.desktop.privacy remember-recent-files false 2>/dev/null || true
+    gsettings set org.gnome.desktop.privacy remove-old-temp-files true 2>/dev/null || true
+    gsettings set org.gnome.desktop.privacy remove-old-trash-files true 2>/dev/null || true
+
+    # File manager settings
+    log_info "Configuring file manager..."
+    gsettings set org.gnome.nautilus.preferences click-policy 'single' 2>/dev/null || true
+
+    # Location services
+    log_info "Enabling location services..."
+    gsettings set org.gnome.system.location enabled true 2>/dev/null || true
+
+    # File chooser settings
+    log_info "Configuring file chooser..."
+    gsettings set org.gtk.settings.file-chooser clock-format '12h' 2>/dev/null || true
+    gsettings set org.gtk.settings.file-chooser show-hidden false 2>/dev/null || true
+
+    echo ""
+    log_success "GNOME desktop customizations applied"
+    return 0
 }
 
 install_audio_enhancements() {
@@ -1617,30 +1701,42 @@ install_steam() {
 
 install_vscode() {
     log_info "Installing Visual Studio Code..."
-    
+
     # Check if already installed
-    if dnf list installed code >/dev/null 2>&1; then
-        log_warn "Visual Studio Code is already installed"
+    if rpm -q code &>/dev/null; then
+        log_success "Visual Studio Code is already installed"
         return 0
     fi
-    
+
     # Add Microsoft repository
     log_info "Adding Microsoft repository..."
-    rpm --import https://packages.microsoft.com/keys/microsoft.asc >/dev/null 2>&1 || {
+    rpm --import https://packages.microsoft.com/keys/microsoft.asc 2>&1 | tail -2 || {
         log_warn "Failed to import Microsoft GPG key"
     }
-    
-    dnf config-manager --add-repo https://packages.microsoft.com/yumrepos/vscode >/dev/null 2>&1 || {
-        log_warn "Failed to add Microsoft repository"
-    }
-    
+
+    # Use dnf5 syntax for adding repository
+    local dnf_version
+    dnf_version=$(dnf --version 2>/dev/null | head -1 | grep -oE '[0-9]+' | head -1)
+
+    if [[ $dnf_version -ge 5 ]]; then
+        dnf config-manager addrepo --from-repofile=https://packages.microsoft.com/yumrepos/vscode 2>&1 | tail -2 || {
+            log_warn "Failed to add Microsoft repository (dnf5)"
+        }
+    else
+        dnf config-manager --add-repo https://packages.microsoft.com/yumrepos/vscode 2>&1 | tail -2 || {
+            log_warn "Failed to add Microsoft repository (dnf4)"
+        }
+    fi
+
     # Install VS Code
-    dnf install -y code >/dev/null 2>&1 || {
+    log_info "Installing code package..."
+    if dnf install -y code 2>&1 | tail -5; then
+        log_success "Visual Studio Code installed successfully"
+        return 0
+    else
         log_error "Failed to install Visual Studio Code"
         return 1
-    }
-    
-    log_success "Visual Studio Code installed successfully"
+    fi
 }
 
 # ============================================================================
