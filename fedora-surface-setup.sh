@@ -604,12 +604,20 @@ install_auto_cpufreq() {
     # Run the auto-cpufreq-installer script
     if [[ -f "./auto-cpufreq-installer" ]]; then
         log_info "Using auto-cpufreq-installer script..."
-        sudo bash ./auto-cpufreq-installer 2>&1 | tail -10 || {
+        log_info "The installer may ask for confirmation. Please respond when prompted."
+        echo ""
+
+        # Run installer with interactive input allowed
+        # Use 'yes' to automatically answer 'y' to any prompts
+        yes | sudo bash ./auto-cpufreq-installer 2>&1 | tee /tmp/auto-cpufreq-install.log || {
             log_error "Failed to run auto-cpufreq-installer"
+            log_error "Check /tmp/auto-cpufreq-install.log for details"
             cd - >/dev/null || true
             rm -rf "$temp_dir"
             return 1
         }
+
+        echo ""
     else
         log_error "auto-cpufreq-installer script not found"
         cd - >/dev/null || true
