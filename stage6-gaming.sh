@@ -422,9 +422,36 @@ configure_stylus_support() {
 
     # Install essential packages for stylus support
     log_info "Installing stylus support packages..."
-    dnf install -y libwacom libwacom-data xorg-x11-apps 2>&1 | tail -3 || {
-        log_warn "Some stylus packages failed to install"
-    }
+
+    # Install libwacom (core stylus support)
+    if ! rpm -q libwacom &>/dev/null; then
+        log_info "Installing libwacom..."
+        dnf install -y libwacom 2>&1 | tail -2 || {
+            log_warn "Failed to install libwacom"
+        }
+    else
+        log_success "libwacom is already installed"
+    fi
+
+    # Install libwacom-data (device database)
+    if ! rpm -q libwacom-data &>/dev/null; then
+        log_info "Installing libwacom-data..."
+        dnf install -y libwacom-data 2>&1 | tail -2 || {
+            log_warn "Failed to install libwacom-data"
+        }
+    else
+        log_success "libwacom-data is already installed"
+    fi
+
+    # Install wacom-tools (optional but useful)
+    if ! rpm -q wacom-tools &>/dev/null; then
+        log_info "Installing wacom-tools..."
+        dnf install -y wacom-tools 2>&1 | tail -2 || {
+            log_warn "Failed to install wacom-tools (optional)"
+        }
+    else
+        log_success "wacom-tools is already installed"
+    fi
 
     # Create stylus configuration directory
     local stylus_config_dir="/etc/gaming-setup/stylus"
@@ -434,26 +461,31 @@ configure_stylus_support() {
 
     log_success "Stylus support directory created"
 
-    # Configure iptsd for stylus (touchscreen + stylus support)
-    log_info "Configuring iptsd for stylus support..."
+    # Configure iptsd for TOUCH ONLY (stylus will be handled by OpenTabletDriver)
+    log_info "Configuring iptsd for touch support (stylus handled by OpenTabletDriver)..."
     mkdir -p /etc/iptsd
 
-    # Create iptsd configuration optimized for gaming
+    # Create iptsd configuration for touch input ONLY
+    # NOTE: Stylus/pen input is handled exclusively by OpenTabletDriver
     cat > /etc/iptsd/iptsd.conf << 'IPTSD_CONFIG'
 [Device]
-# Surface Pro stylus configuration
+# Surface Pro touch configuration (TOUCH ONLY - stylus excluded)
+# Stylus input is handled by OpenTabletDriver daemon
 PressureThreshold = 5
 MaxPressure = 4095
 
-[StylusGaming]
-# Gaming-optimized stylus settings
-TipDistance = 0
+[Touch]
+# Touch-specific settings
+# These settings apply to finger touch input only
 PressureThreshold = 5
 MaxPressure = 4095
-SmoothingFactor = 0.6
-LatencyCompensation = true
+SmoothingFactor = 0.3
+LatencyCompensation = false
+
+# NOTE: Stylus/pen input is NOT handled by iptsd
+# OpenTabletDriver (otd-daemon) handles all stylus input for gaming
 IPTSD_CONFIG
-    log_success "iptsd configuration created"
+    log_success "iptsd configuration created (touch only, stylus excluded)"
 
     # Enable and start iptsd service (if available)
     log_info "Configuring iptsd service..."
@@ -471,23 +503,26 @@ IPTSD_CONFIG
     fi
 
     # Create udev rules for OpenTabletDriver tablet detection
-    log_info "Creating udev rules for OpenTabletDriver..."
+    log_info "Creating udev rules for OpenTabletDriver (stylus exclusive)..."
     sudo tee /etc/udev/rules.d/99-opentabletdriver.rules > /dev/null << 'UDEV_RULES'
 # OpenTabletDriver udev rules for tablet device access
 # Allows OpenTabletDriver to detect and access tablet devices
+# IMPORTANT: These rules ensure OpenTabletDriver has exclusive access to stylus devices
 
-# Generic tablet devices
-SUBSYSTEM=="usb", MODE="0666"
-SUBSYSTEM=="hidraw", MODE="0666"
+# Surface Pro stylus (Intel Precise Touch & Stylus) - EXCLUSIVE to OpenTabletDriver
+# Device ID 045e is Microsoft, stylus devices get exclusive access
+SUBSYSTEM=="usb", ATTRS{idVendor}=="045e", ATTRS{idProduct}=="*", MODE="0666", GROUP="input"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="045e", MODE="0666", GROUP="input"
 
-# Surface Pro stylus (Intel Precise Touch & Stylus)
-SUBSYSTEM=="usb", ATTRS{idVendor}=="045e", ATTRS{idProduct}=="*", MODE="0666"
+# HID devices for tablets - give OpenTabletDriver priority
+SUBSYSTEM=="hid", ATTRS{idVendor}=="045e", MODE="0666", GROUP="input"
 
-# Wacom devices (fallback)
-SUBSYSTEM=="usb", ATTRS{idVendor}=="056a", MODE="0666"
+# Wacom devices (fallback for other tablets)
+SUBSYSTEM=="usb", ATTRS{idVendor}=="056a", MODE="0666", GROUP="input"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="056a", MODE="0666", GROUP="input"
 
-# HID devices for tablets
-SUBSYSTEM=="hid", MODE="0666"
+# Generic tablet/stylus devices
+SUBSYSTEM=="hidraw", MODE="0666", GROUP="input"
 UDEV_RULES
 
     # Reload udev rules
@@ -700,22 +735,34 @@ echo "Recent OpenTabletDriver logs:"
 journalctl -u otd-daemon -n 10 --no-pager
 
 echo ""
-echo "Tablet Detection Troubleshooting:"
+echo "Input Device Verification:"
+echo "  Touch (iptsd): xinput list | grep -i touch"
+echo "  Stylus (OTD):  xinput list | grep -i stylus"
+echo ""
+echo "Stylus Detection Troubleshooting:"
 echo "  1. Check USB connection: lsusb | grep -i surface"
-echo "  2. Check udev rules: ls -la /etc/udev/rules.d/99-opentabletdriver.rules"
+echo "  2. Check udev rules: cat /etc/udev/rules.d/99-opentabletdriver.rules"
 echo "  3. Check device permissions: ls -la /dev/hidraw*"
 echo "  4. Reload udev: sudo udevadm control --reload-rules && sudo udevadm trigger"
 echo "  5. Restart daemon: sudo systemctl restart otd-daemon"
+echo "  6. Check daemon logs: journalctl -u otd-daemon -f"
 echo ""
-echo "To configure OpenTabletDriver:"
+echo "Touch Input Verification:"
+echo "  1. Check iptsd status: systemctl status iptsd"
+echo "  2. Check iptsd logs: journalctl -u iptsd -n 20"
+echo "  3. Test touch: xinput test 'Touch Screen'"
+echo ""
+echo "To configure OpenTabletDriver for osu!:"
 echo "  1. Launch GUI: opentabletdriver"
-echo "  2. Or use: /etc/gaming-setup/stylus/configure-otd.sh"
+echo "  2. Go to Tablet section and select your Surface Pro stylus"
+echo "  3. Set Output Mode to Absolute"
+echo "  4. Configure Tablet Area to match your screen"
+echo "  5. Load profile: ~/.config/OpenTabletDriver/osu-profile.json"
+echo "  6. Adjust sensitivity (start at 1.0)"
+echo "  7. Test in GUI before launching osu!"
 echo ""
-echo "For osu! gaming:"
-echo "  1. Launch OpenTabletDriver GUI"
-echo "  2. Load profile: ~/.config/OpenTabletDriver/osu-profile.json"
-echo "  3. Configure tablet area and sensitivity"
-echo "  4. Launch osu!"
+echo "Launch osu! with stylus:"
+echo "  steam steam://run/1677970"
 EOF
     chmod +x "$stylus_config_dir/test-stylus.sh" || {
         log_warn "Failed to make test script executable"
