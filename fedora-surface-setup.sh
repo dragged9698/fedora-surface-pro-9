@@ -1711,25 +1711,23 @@ install_vscode() {
         return 0
     fi
 
-    # Add Microsoft repository
-    log_info "Adding Microsoft repository..."
+    # Import Microsoft GPG key
+    log_info "Importing Microsoft GPG key..."
     rpm --import https://packages.microsoft.com/keys/microsoft.asc 2>&1 | tail -2 || {
         log_warn "Failed to import Microsoft GPG key"
     }
 
-    # Use dnf5 syntax for adding repository
-    local dnf_version
-    dnf_version=$(dnf --version 2>/dev/null | head -1 | grep -oE '[0-9]+' | head -1)
+    # Add VSCode repository directly via repo file
+    log_info "Adding Visual Studio Code repository..."
+    sh -c 'echo -e "[code]\nname=Visual Studio Code\nbaseurl=https://packages.microsoft.com/yumrepos/vscode\nenabled=1\ngpgcheck=1\ngpgkey=https://packages.microsoft.com/keys/microsoft.asc" > /etc/yum.repos.d/vscode.repo' 2>&1 || {
+        log_warn "Failed to create VSCode repository file"
+    }
 
-    if [[ $dnf_version -ge 5 ]]; then
-        dnf config-manager addrepo --from-repofile=https://packages.microsoft.com/yumrepos/vscode 2>&1 | tail -2 || {
-            log_warn "Failed to add Microsoft repository (dnf5)"
-        }
-    else
-        dnf config-manager --add-repo https://packages.microsoft.com/yumrepos/vscode 2>&1 | tail -2 || {
-            log_warn "Failed to add Microsoft repository (dnf4)"
-        }
-    fi
+    # Refresh dnf cache
+    log_info "Refreshing package cache..."
+    dnf makecache 2>&1 | tail -2 || {
+        log_warn "Failed to refresh package cache"
+    }
 
     # Install VS Code
     log_info "Installing code package..."
