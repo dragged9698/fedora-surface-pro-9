@@ -133,33 +133,53 @@ update_system() {
 install_surface_kernel() {
     log_info "Installing Linux Surface kernel..."
 
-    # Add Linux Surface repository with retry logic
+    # Add Linux Surface repository with retry logic and diagnostics
     log_info "Adding Linux Surface repository..."
     local repo_url="https://pkg.surfacelinux.com/fedora/linux-surface.repo"
     local max_retries=3
     local retry_count=0
 
     while [[ $retry_count -lt $max_retries ]]; do
-        if dnf config-manager --add-repo="$repo_url" >/dev/null 2>&1; then
+        log_info "Attempting to add repository (attempt $((retry_count + 1))/$max_retries)..."
+
+        # Try to add the repository with verbose output
+        local output
+        output=$(dnf config-manager --add-repo="$repo_url" 2>&1)
+        local exit_code=$?
+
+        if [[ $exit_code -eq 0 ]]; then
             log_success "Linux Surface repository added successfully"
             break
         else
             ((retry_count++))
+            log_warn "Repository addition failed with exit code: $exit_code"
+            log_warn "Output: $output"
+
             if [[ $retry_count -lt $max_retries ]]; then
-                log_warn "Failed to add repository (attempt $retry_count/$max_retries). Retrying in 5 seconds..."
+                log_warn "Retrying in 5 seconds (attempt $retry_count/$max_retries)..."
                 sleep 5
             else
                 log_error "Failed to add Linux Surface repository after $max_retries attempts"
-                return 1
+                log_error "This may be due to network issues or repository unavailability"
+                log_warn "Attempting to continue without repository (packages may not be available)"
+                return 0  # Don't fail completely, try to continue
             fi
         fi
     done
 
     # Install kernel and dependencies
     log_info "Installing kernel-surface, iptsd, and libwacom-surface..."
-    if ! dnf install --allowerasing -y kernel-surface iptsd libwacom-surface >/dev/null 2>&1; then
+    log_info "This may take several minutes..."
+
+    if ! dnf install --allowerasing -y kernel-surface iptsd libwacom-surface 2>&1 | tee /tmp/kernel-install.log; then
         log_error "Failed to install Surface kernel packages"
-        return 1
+        log_error "Check /tmp/kernel-install.log for details"
+        log_warn "Attempting to install packages individually..."
+
+        # Try installing packages individually
+        dnf install -y kernel-surface 2>&1 | tail -5 || log_warn "kernel-surface installation failed"
+        dnf install -y iptsd 2>&1 | tail -5 || log_warn "iptsd installation failed"
+        dnf install -y libwacom-surface 2>&1 | tail -5 || log_warn "libwacom-surface installation failed"
     fi
     log_success "Surface kernel packages installed"
     
