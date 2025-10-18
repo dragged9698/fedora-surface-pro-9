@@ -604,18 +604,45 @@ install_auto_cpufreq() {
     # Run the auto-cpufreq-installer script
     if [[ -f "./auto-cpufreq-installer" ]]; then
         log_info "Using auto-cpufreq-installer script..."
-        log_info "The installer may ask for confirmation. Please respond when prompted."
+        log_info "Running installer (this may take a few minutes)..."
         echo ""
 
         # Run installer with interactive input allowed
         # Use 'yes' to automatically answer 'y' to any prompts
-        yes | sudo bash ./auto-cpufreq-installer 2>&1 | tee /tmp/auto-cpufreq-install.log || {
-            log_error "Failed to run auto-cpufreq-installer"
-            log_error "Check /tmp/auto-cpufreq-install.log for details"
-            cd - >/dev/null || true
-            rm -rf "$temp_dir"
-            return 1
-        }
+        if yes | sudo bash ./auto-cpufreq-installer 2>&1 | tee /tmp/auto-cpufreq-install.log; then
+            log_success "auto-cpufreq-installer completed successfully"
+        else
+            local exit_code=$?
+            log_warn "auto-cpufreq-installer exited with code: $exit_code"
+
+            # Check if it's just a configuration warning
+            if grep -qi "unknown key\|warning" /tmp/auto-cpufreq-install.log; then
+                log_warn "Installer reported warnings but may have completed"
+                log_info "Checking if auto-cpufreq was installed..."
+
+                # Give it a moment to finish
+                sleep 2
+
+                # Check if auto-cpufreq is actually installed
+                if command -v auto-cpufreq &>/dev/null; then
+                    log_success "auto-cpufreq is installed despite warnings"
+                else
+                    log_error "auto-cpufreq installation failed"
+                    log_error "Check /tmp/auto-cpufreq-install.log for details"
+                    tail -20 /tmp/auto-cpufreq-install.log | sed 's/^/  /'
+                    cd - >/dev/null || true
+                    rm -rf "$temp_dir"
+                    return 1
+                fi
+            else
+                log_error "Failed to run auto-cpufreq-installer"
+                log_error "Check /tmp/auto-cpufreq-install.log for details"
+                tail -20 /tmp/auto-cpufreq-install.log | sed 's/^/  /'
+                cd - >/dev/null || true
+                rm -rf "$temp_dir"
+                return 1
+            fi
+        fi
 
         echo ""
     else
@@ -630,8 +657,24 @@ install_auto_cpufreq() {
 
     # Verify installation
     if ! command -v auto-cpufreq &>/dev/null; then
-        log_error "auto-cpufreq installation verification failed"
-        return 1
+        log_warn "auto-cpufreq not found in PATH, attempting fallback installation..."
+
+        # Try installing from pip as fallback
+        log_info "Attempting to install auto-cpufreq via pip..."
+        if pip3 install auto-cpufreq 2>&1 | tail -5; then
+            log_info "Waiting for pip installation to complete..."
+            sleep 2
+
+            if command -v auto-cpufreq &>/dev/null; then
+                log_success "auto-cpufreq installed via pip"
+            else
+                log_error "auto-cpufreq installation verification failed"
+                return 1
+            fi
+        else
+            log_error "auto-cpufreq installation verification failed"
+            return 1
+        fi
     fi
 
     log_success "auto-cpufreq installed successfully"
