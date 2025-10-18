@@ -157,12 +157,11 @@ install_surface_kernel() {
 
     # Install kernel and dependencies
     log_info "Installing kernel-surface, iptsd, and libwacom-surface..."
-    dnf install --allowerasing -y kernel-surface iptsd libwacom-surface 2>&1 | grep -E "^(Installing|Updating|Removing|Downgrading)" || true
-
-    if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
+    if ! dnf install --allowerasing -y kernel-surface iptsd libwacom-surface >/dev/null 2>&1; then
         log_error "Failed to install Surface kernel packages"
         return 1
     fi
+    log_success "Surface kernel packages installed"
     
     # Install secure boot support
     log_info "Installing surface-secureboot..."
