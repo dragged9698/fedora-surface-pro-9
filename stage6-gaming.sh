@@ -460,13 +460,22 @@ EOF
 }
 
 configure_stylus_support() {
-    log_info "Configuring stylus support for Surface Pro..."
+    log_info "Configuring stylus support for Surface Pro (OpenTabletDriver)..."
     echo ""
 
-    # Install stylus-related packages
-    log_info "Installing stylus support packages..."
-    dnf install -y libwacom libwacom-data wacom-tools 2>&1 | tail -3 || {
-        log_warn "Failed to install stylus support packages"
+    # Install OpenTabletDriver (better for gaming like osu!)
+    log_info "Installing OpenTabletDriver (gaming-optimized stylus driver)..."
+    dnf copr enable -y hawkeye116477/OpenTabletDriver 2>&1 | tail -2 || {
+        log_warn "Failed to enable OpenTabletDriver COPR repository"
+    }
+    dnf install -y opentabletdriver 2>&1 | tail -3 || {
+        log_warn "Failed to install OpenTabletDriver"
+    }
+
+    # Install libwacom for fallback support
+    log_info "Installing libwacom (fallback support)..."
+    dnf install -y libwacom libwacom-data 2>&1 | tail -3 || {
+        log_warn "Failed to install libwacom"
     }
 
     # Create stylus configuration directory
@@ -475,105 +484,117 @@ configure_stylus_support() {
         log_warn "Failed to create stylus config directory"
     }
 
-    # Configure iptsd stylus settings (enhance existing config)
-    log_info "Enhancing iptsd stylus configuration..."
-    local iptsd_conf="/etc/iptsd/iptsd.conf"
+    # Create OpenTabletDriver configuration directory
+    log_info "Setting up OpenTabletDriver configuration..."
+    mkdir -p ~/.config/OpenTabletDriver
+    mkdir -p /etc/gaming-setup/opentabletdriver
 
-    if [[ -f "$iptsd_conf" ]]; then
-        # Backup existing config
-        cp "$iptsd_conf" "${iptsd_conf}.backup.$(date +%s)" 2>/dev/null || true
-
-        # Enhance stylus section with gaming-optimized settings
-        if ! grep -q "StylusGameMode" "$iptsd_conf"; then
-            cat >> "$iptsd_conf" << 'EOF'
-
-# Gaming-optimized stylus settings
-[StylusGaming]
-TipDistance = 0
-PressureThreshold = 10
-MaxPressure = 4095
-SmoothingFactor = 0.8
-LatencyCompensation = true
-EOF
-            log_success "Gaming stylus settings added to iptsd config"
-        fi
-    else
-        log_warn "iptsd configuration not found - stylus may need manual setup"
-    fi
-
-    # Create udev rules for stylus pressure sensitivity
-    log_info "Creating udev rules for stylus pressure sensitivity..."
-    cat > /etc/udev/rules.d/99-stylus-gaming.rules << 'EOF'
-# Surface Pro stylus gaming optimization
-# Increase pressure levels for better precision
-SUBSYSTEM=="input", ATTRS{name}=="*Stylus*", ENV{LIBINPUT_CALIBRATION_MATRIX}="1 0 0 0 1 0"
-
-# Enable stylus button mapping for gaming
-SUBSYSTEM=="input", ATTRS{name}=="*Stylus*", RUN+="/usr/bin/xinput set-prop %k 'Stylus Pressure' 4095"
-EOF
-
-    # Reload udev rules
-    udevadm control --reload-rules 2>&1 | tail -1 || {
-        log_warn "Failed to reload udev rules"
+    # Create OpenTabletDriver config for gaming (osu! optimized)
+    cat > /etc/gaming-setup/opentabletdriver/gaming-profile.json << 'OTD_CONFIG'
+{
+  "Profiles": [
+    {
+      "Name": "osu! Gaming",
+      "Tablet": null,
+      "Tools": [
+        {
+          "Type": "Pen",
+          "Settings": {
+            "Pressure": 1.0,
+            "Tip Activation Threshold": 0,
+            "Tip Pressure Threshold": 0
+          }
+        }
+      ],
+      "Filters": [
+        {
+          "Type": "SmoothingFilter",
+          "Settings": {
+            "Smoothing": 0.5,
+            "Latency": 0
+          }
+        }
+      ],
+      "OutputMode": "Absolute",
+      "AbsoluteModeSettings": {
+        "Display": 0,
+        "Sensitivity": 1.0,
+        "Rotation": 0
+      }
     }
-    udevadm trigger 2>&1 | tail -1 || {
-        log_warn "Failed to trigger udev"
+  ]
+}
+OTD_CONFIG
+    log_info "OpenTabletDriver gaming profile created"
+
+    # Enable and start OpenTabletDriver daemon
+    log_info "Enabling OpenTabletDriver daemon..."
+    systemctl enable otd-daemon 2>&1 | tail -1 || {
+        log_warn "Failed to enable otd-daemon"
     }
+    systemctl start otd-daemon 2>&1 | tail -1 || {
+        log_warn "Failed to start otd-daemon"
+    }
+
+    # Create startup script for OpenTabletDriver GUI
+    log_info "Creating OpenTabletDriver startup script..."
+    cat > /usr/local/bin/start-otd << 'OTD_SCRIPT'
+#!/bin/bash
+# Start OpenTabletDriver GUI
+exec opentabletdriver &
+OTD_SCRIPT
+    chmod +x /usr/local/bin/start-otd
+    log_success "OpenTabletDriver startup script created"
     log_success "Udev rules created and reloaded"
 
-    # Create stylus calibration script
-    log_info "Creating stylus calibration script..."
-    cat > "$stylus_config_dir/calibrate-stylus.sh" << 'EOF'
+    # Create OpenTabletDriver configuration script
+    log_info "Creating OpenTabletDriver configuration script..."
+    cat > "$stylus_config_dir/configure-otd.sh" << 'EOF'
 #!/bin/bash
-# Stylus calibration script for Surface Pro gaming
+# OpenTabletDriver configuration script for osu! and gaming
 
-echo "Surface Pro Stylus Calibration"
-echo "=============================="
-echo ""
-echo "This script helps calibrate your stylus for optimal gaming performance."
+echo "OpenTabletDriver Configuration for Gaming"
+echo "=========================================="
 echo ""
 
-# Check if xinput is available
-if ! command -v xinput &>/dev/null; then
-    echo "Error: xinput not found. Install xorg-x11-apps package."
+# Check if OpenTabletDriver is installed
+if ! command -v opentabletdriver &>/dev/null; then
+    echo "Error: OpenTabletDriver not found. Install it first."
     exit 1
 fi
 
-# List input devices
-echo "Available input devices:"
-xinput list | grep -i stylus
-
+echo "OpenTabletDriver options:"
+echo "1. Launch OpenTabletDriver GUI"
+echo "2. Check daemon status"
+echo "3. Restart daemon"
+echo "4. View configuration"
+echo "5. Test tablet input"
 echo ""
-echo "Stylus calibration options:"
-echo "1. Reset to defaults"
-echo "2. Increase pressure sensitivity"
-echo "3. Decrease pressure sensitivity"
-echo "4. Test stylus input"
-echo ""
-read -p "Select option (1-4): " option
+read -p "Select option (1-5): " option
 
 case $option in
     1)
-        echo "Resetting stylus to default settings..."
-        # Reset pressure to default
-        xinput set-prop "Stylus" "Stylus Pressure" 4095
-        echo "Done!"
+        echo "Launching OpenTabletDriver GUI..."
+        opentabletdriver &
         ;;
     2)
-        echo "Increasing pressure sensitivity..."
-        xinput set-prop "Stylus" "Stylus Pressure" 2048
-        echo "Done!"
+        echo "Checking OpenTabletDriver daemon status..."
+        systemctl status otd-daemon
         ;;
     3)
-        echo "Decreasing pressure sensitivity..."
-        xinput set-prop "Stylus" "Stylus Pressure" 8191
+        echo "Restarting OpenTabletDriver daemon..."
+        sudo systemctl restart otd-daemon
         echo "Done!"
         ;;
     4)
-        echo "Testing stylus input..."
-        echo "Move stylus over the screen and press buttons..."
-        sleep 5
-        xinput test "Stylus"
+        echo "OpenTabletDriver configuration:"
+        cat ~/.config/OpenTabletDriver/settings.json 2>/dev/null || echo "No configuration found yet"
+        ;;
+    5)
+        echo "Testing tablet input..."
+        echo "Move stylus over the screen..."
+        sleep 3
+        journalctl -u otd-daemon -f --lines=20
         ;;
     *)
         echo "Invalid option"
@@ -581,81 +602,90 @@ case $option in
         ;;
 esac
 EOF
-    chmod +x "$stylus_config_dir/calibrate-stylus.sh" || {
-        log_warn "Failed to make calibration script executable"
+    chmod +x "$stylus_config_dir/configure-otd.sh" || {
+        log_warn "Failed to make OTD configuration script executable"
     }
-    log_success "Stylus calibration script created"
+    log_success "OpenTabletDriver configuration script created"
 
-    # Create stylus pressure mapping for drawing applications
-    log_info "Creating stylus pressure mapping configuration..."
-    mkdir -p "$HOME/.config/wacom" 2>/dev/null || true
+    # Create OpenTabletDriver osu! profile
+    log_info "Creating OpenTabletDriver osu! profile..."
+    mkdir -p "$HOME/.config/OpenTabletDriver" 2>/dev/null || true
 
-    cat > "$HOME/.config/wacom/stylus-gaming.conf" << 'EOF'
-# Stylus pressure mapping for gaming applications
-# This configuration optimizes stylus response for drawing and painting games
-
-[Stylus]
-# Pressure curve: linear (0) to exponential (1)
-PressureCurve=0.5
-
-# Pressure threshold (0-255)
-PressureThreshold=10
-
-# Tilt sensitivity (0-100)
-TiltSensitivity=100
-
-# Rotation sensitivity (0-100)
-RotationSensitivity=100
-
-# Button mapping
-Button1=1
-Button2=2
-Button3=3
-
-# Haptic feedback (if supported)
-HapticFeedback=true
+    cat > "$HOME/.config/OpenTabletDriver/osu-profile.json" << 'EOF'
+{
+  "Name": "osu! Gaming Profile",
+  "OutputMode": "Absolute",
+  "AbsoluteModeSettings": {
+    "Display": 0,
+    "Sensitivity": 1.0,
+    "Rotation": 0,
+    "EnableClipping": true
+  },
+  "RelativeModeSettings": {
+    "Sensitivity": 1.0,
+    "Acceleration": 0,
+    "ResetDelay": 50
+  },
+  "Filters": [
+    {
+      "Type": "SmoothingFilter",
+      "Settings": {
+        "Smoothing": 0.5,
+        "Latency": 0
+      }
+    }
+  ],
+  "Tools": [
+    {
+      "Type": "Pen",
+      "Settings": {
+        "Pressure": 1.0,
+        "Tip Activation Threshold": 0,
+        "Tip Pressure Threshold": 0
+      }
+    }
+  ]
+}
 EOF
-    log_success "Stylus pressure mapping created"
+    log_success "OpenTabletDriver osu! profile created"
 
-    # Create stylus testing utility
-    log_info "Creating stylus testing utility..."
+    # Create OpenTabletDriver testing utility
+    log_info "Creating OpenTabletDriver testing utility..."
     cat > "$stylus_config_dir/test-stylus.sh" << 'EOF'
 #!/bin/bash
-# Test stylus functionality
+# Test OpenTabletDriver functionality
 
-echo "Surface Pro Stylus Test"
-echo "======================="
+echo "OpenTabletDriver Test"
+echo "===================="
 echo ""
 
-# Check if stylus is detected
-if xinput list | grep -qi stylus; then
-    echo "✓ Stylus detected"
+# Check if OpenTabletDriver daemon is running
+if systemctl is-active --quiet otd-daemon; then
+    echo "✓ OpenTabletDriver daemon is running"
 else
-    echo "✗ Stylus NOT detected"
-    exit 1
+    echo "✗ OpenTabletDriver daemon is NOT running"
+    echo "Starting daemon..."
+    sudo systemctl start otd-daemon
 fi
 
-# Get stylus device ID
-stylus_id=$(xinput list | grep -i stylus | grep -oP 'id=\K[0-9]+' | head -1)
-
-if [[ -z "$stylus_id" ]]; then
-    echo "✗ Could not find stylus device ID"
-    exit 1
-fi
-
-echo "✓ Stylus device ID: $stylus_id"
 echo ""
-
-# Test stylus properties
-echo "Stylus Properties:"
-xinput list-props "$stylus_id" | grep -i pressure
+echo "OpenTabletDriver Status:"
+systemctl status otd-daemon --no-pager
 
 echo ""
-echo "Testing stylus input (move stylus and press buttons)..."
-echo "Press Ctrl+C to stop"
-echo ""
+echo "Recent OpenTabletDriver logs:"
+journalctl -u otd-daemon -n 10 --no-pager
 
-xinput test "$stylus_id"
+echo ""
+echo "To configure OpenTabletDriver:"
+echo "  1. Launch GUI: opentabletdriver"
+echo "  2. Or use: /etc/gaming-setup/stylus/configure-otd.sh"
+echo ""
+echo "For osu! gaming:"
+echo "  1. Launch OpenTabletDriver GUI"
+echo "  2. Load profile: ~/.config/OpenTabletDriver/osu-profile.json"
+echo "  3. Configure tablet area and sensitivity"
+echo "  4. Launch osu!"
 EOF
     chmod +x "$stylus_config_dir/test-stylus.sh" || {
         log_warn "Failed to make test script executable"
@@ -711,8 +741,15 @@ display_gaming_info() {
     echo "    ✓ Xbox Controller Support (kernel-modules-extra + xpadneo)"
     echo "    ✓ DualSense Controller Support (steam-devices)"
     echo "    ✓ Input device tools (jstest-gtk, evtest)"
-    echo "    ✓ Surface Pro Stylus Support (libwacom, iptsd enhanced)"
-    echo "    ✓ Stylus pressure mapping & calibration"
+    echo ""
+    echo "  ╔════════════════════════════════════════════════════════════╗"
+    echo "  ║  STYLUS SUPPORT (OpenTabletDriver - osu! optimized)       ║"
+    echo "  ╚════════════════════════════════════════════════════════════╝"
+    echo "    ✓ OpenTabletDriver (gaming-optimized stylus driver)"
+    echo "    ✓ libwacom (fallback support)"
+    echo "    ✓ osu! gaming profile pre-configured"
+    echo "    ✓ Daemon auto-start enabled"
+    echo "    ✓ Configuration tools included"
     echo ""
     echo "  ╔════════════════════════════════════════════════════════════╗"
     echo "  ║  PERFORMANCE OPTIMIZATIONS                                ║"
@@ -733,7 +770,7 @@ display_gaming_info() {
     echo "    5. Connect controllers via Bluetooth or USB"
     echo "    6. Test controllers: jstest-gtk or evtest"
     echo "    7. Test stylus: /etc/gaming-setup/stylus/test-stylus.sh"
-    echo "    8. Calibrate stylus: /etc/gaming-setup/stylus/calibrate-stylus.sh"
+    echo "    8. Configure stylus: /etc/gaming-setup/stylus/configure-otd.sh"
     echo ""
     echo "  ╔════════════════════════════════════════════════════════════╗"
     echo "  ║  ADVANCED LAUNCHERS                                       ║"
@@ -751,18 +788,20 @@ display_gaming_info() {
     echo "    • Audio config: ~/.config/pipewire/pipewire.conf.d/"
     echo "    • Shader cache: ~/.cache/shader-cache/"
     echo "    • DXVK cache: ~/.cache/dxvk-cache/"
-    echo "    • Stylus config: /etc/iptsd/iptsd.conf"
-    echo "    • Stylus gaming: ~/.config/wacom/stylus-gaming.conf"
-    echo "    • Stylus tools: /etc/gaming-setup/stylus/"
+    echo "    • OTD config: ~/.config/OpenTabletDriver/"
+    echo "    • OTD profile: ~/.config/OpenTabletDriver/osu-profile.json"
+    echo "    • OTD tools: /etc/gaming-setup/stylus/"
     echo ""
     echo "  ╔════════════════════════════════════════════════════════════╗"
-    echo "  ║  STYLUS TROUBLESHOOTING                                   ║"
+    echo "  ║  STYLUS TROUBLESHOOTING (OpenTabletDriver)                ║"
     echo "  ╚════════════════════════════════════════════════════════════╝"
     echo "    • Test stylus: /etc/gaming-setup/stylus/test-stylus.sh"
-    echo "    • Calibrate: /etc/gaming-setup/stylus/calibrate-stylus.sh"
-    echo "    • Check iptsd: systemctl status iptsd"
-    echo "    • View logs: journalctl -u iptsd -f"
-    echo "    • Restart iptsd: sudo systemctl restart iptsd"
+    echo "    • Configure OTD: /etc/gaming-setup/stylus/configure-otd.sh"
+    echo "    • Launch GUI: opentabletdriver"
+    echo "    • Check daemon: systemctl status otd-daemon"
+    echo "    • View logs: journalctl -u otd-daemon -f"
+    echo "    • Restart daemon: sudo systemctl restart otd-daemon"
+    echo "    • For osu!: Load ~/.config/OpenTabletDriver/osu-profile.json"
     echo ""
 }
 
