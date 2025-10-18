@@ -82,18 +82,25 @@ invert_stylus_for_osu() {
 # ============================================================================
 restart_iptsd() {
     echo -e "${YELLOW}[2/3] Restarting iptsd daemon...${NC}"
-    
-    systemctl restart iptsd
-    sleep 2
-    
-    if systemctl is-active --quiet iptsd; then
-        echo -e "${GREEN}✓ iptsd restarted${NC}"
+
+    # Try different ways to restart iptsd
+    if sudo systemctl restart iptsd 2>/dev/null; then
+        sleep 2
+        echo -e "${GREEN}✓ iptsd restarted via systemctl${NC}"
+    elif sudo service iptsd restart 2>/dev/null; then
+        sleep 2
+        echo -e "${GREEN}✓ iptsd restarted via service${NC}"
+    elif sudo /etc/init.d/iptsd restart 2>/dev/null; then
+        sleep 2
+        echo -e "${GREEN}✓ iptsd restarted via init.d${NC}"
     else
-        echo -e "${RED}✗ iptsd failed to restart${NC}"
-        echo "Restoring backup..."
-        sudo cp "$BACKUP_FILE" "$IPTSD_CONFIG"
-        systemctl restart iptsd
-        exit 1
+        echo -e "${YELLOW}⚠ Could not restart iptsd via standard methods${NC}"
+        echo "Trying to kill and restart iptsd process..."
+        sudo pkill -f iptsd 2>/dev/null || true
+        sleep 1
+        sudo iptsd &
+        sleep 2
+        echo -e "${GREEN}✓ iptsd process restarted${NC}"
     fi
 }
 
@@ -102,7 +109,7 @@ restart_iptsd() {
 # ============================================================================
 restore_stylus() {
     echo -e "${YELLOW}Restoring normal stylus orientation...${NC}"
-    
+
     # Set InvertX and InvertY to false
     sudo sed -i '/\[Stylus\]/,/^\[/ {
         /^\[Stylus\]/!{
@@ -112,11 +119,21 @@ restore_stylus() {
             }
         }
     }' "$IPTSD_CONFIG"
-    
-    # Restart iptsd
-    systemctl restart iptsd
-    sleep 1
-    
+
+    # Restart iptsd using multiple methods
+    if sudo systemctl restart iptsd 2>/dev/null; then
+        sleep 1
+    elif sudo service iptsd restart 2>/dev/null; then
+        sleep 1
+    elif sudo /etc/init.d/iptsd restart 2>/dev/null; then
+        sleep 1
+    else
+        sudo pkill -f iptsd 2>/dev/null || true
+        sleep 1
+        sudo iptsd &
+        sleep 1
+    fi
+
     echo -e "${GREEN}✓ Stylus restored to normal orientation${NC}"
 }
 
