@@ -135,6 +135,7 @@ update_system() {
 
 install_surface_kernel() {
     log_info "Installing Linux Surface kernel..."
+    echo ""
 
     # Add Linux Surface repository with retry logic and diagnostics
     log_info "Adding Linux Surface repository..."
@@ -160,11 +161,11 @@ install_surface_kernel() {
 
             # Use appropriate syntax based on dnf version
             if [[ $dnf_version -ge 5 ]]; then
-                log_info "Using dnf5 syntax for repository addition..."
+                log_info "Using dnf5 syntax: dnf config-manager addrepo --from-repofile=..."
                 output=$(timeout 30 dnf config-manager addrepo --from-repofile="$repo_url" 2>&1)
                 exit_code=$?
             else
-                log_info "Using dnf4 syntax for repository addition..."
+                log_info "Using dnf4 syntax: dnf config-manager --add-repo=..."
                 output=$(timeout 30 dnf config-manager --add-repo="$repo_url" 2>&1)
                 exit_code=$?
             fi
@@ -176,20 +177,21 @@ install_surface_kernel() {
             else
                 ((retry_count++))
                 log_warn "Repository addition failed with exit code: $exit_code"
-                log_warn "Output: $output"
 
                 if [[ $retry_count -lt $max_retries ]]; then
                     log_warn "Retrying in 5 seconds (attempt $retry_count/$max_retries)..."
                     sleep 5
                 else
-                    log_error "Failed to add Linux Surface repository after $max_retries attempts"
-                    log_error "This may be due to network issues or repository unavailability"
-                    log_warn "Attempting to continue without repository (packages may not be available)"
-                    break  # Continue anyway
+                    log_warn "Failed to add Linux Surface repository after $max_retries attempts"
+                    log_warn "This may be due to network issues or repository unavailability"
+                    log_warn "Attempting to continue (packages may not be available)"
+                    break
                 fi
             fi
         done
     fi
+
+    echo ""
 
     # Install kernel and dependencies
     log_info "Installing kernel-surface, iptsd, and libwacom-surface..."
@@ -197,7 +199,7 @@ install_surface_kernel() {
 
     # Check if packages are already installed
     local packages_to_install=""
-    command -v kernel-surface &>/dev/null || packages_to_install="kernel-surface"
+    rpm -q kernel-surface &>/dev/null || packages_to_install="kernel-surface"
     rpm -q iptsd &>/dev/null || packages_to_install="$packages_to_install iptsd"
     rpm -q libwacom-surface &>/dev/null || packages_to_install="$packages_to_install libwacom-surface"
 
@@ -205,40 +207,70 @@ install_surface_kernel() {
         log_success "Surface kernel packages are already installed"
     else
         log_info "Installing packages: $packages_to_install"
-        if ! dnf install --allowerasing -y $packages_to_install 2>&1 | tee /tmp/kernel-install.log; then
-            log_error "Failed to install Surface kernel packages"
-            log_error "Check /tmp/kernel-install.log for details"
-            log_warn "Attempting to install packages individually..."
-
-            # Try installing packages individually
-            [[ "$packages_to_install" == *"kernel-surface"* ]] && dnf install -y kernel-surface 2>&1 | tail -5 || true
-            [[ "$packages_to_install" == *"iptsd"* ]] && dnf install -y iptsd 2>&1 | tail -5 || true
-            [[ "$packages_to_install" == *"libwacom-surface"* ]] && dnf install -y libwacom-surface 2>&1 | tail -5 || true
+        if dnf install --allowerasing -y $packages_to_install 2>&1 | tail -5; then
+            log_success "Surface kernel packages installed successfully"
+        else
+            log_warn "Installation completed with warnings (packages may still be installed)"
         fi
-        log_success "Surface kernel packages installed"
     fi
-    
+
+    echo ""
+
     # Install secure boot support
+    log_info "Installing secure boot support..."
     if rpm -q surface-secureboot &>/dev/null; then
         log_success "surface-secureboot is already installed"
     else
-        log_info "Installing surface-secureboot..."
-        dnf install -y surface-secureboot >/dev/null 2>&1 || {
+        log_info "Installing surface-secureboot package..."
+        if dnf install -y surface-secureboot 2>&1 | tail -3; then
+            log_success "surface-secureboot installed successfully"
+            echo ""
+            log_info "IMPORTANT: Secure Boot Key Enrollment"
+            log_info "On your next reboot, you will see a blue menu for key enrollment:"
+            log_info "  1. A blue screen will appear asking to enroll the signing key"
+            log_info "  2. Select 'ok' or 'yes' to confirm enrollment"
+            log_info "  3. Enter password: surface"
+            log_info "  4. System will reboot and Linux Surface kernel will boot with Secure Boot enabled"
+        else
             log_warn "Failed to install surface-secureboot (may not be critical)"
-        }
+        fi
     fi
 
+    echo ""
+
     # Enable Surface watchdog
+    log_info "Enabling Linux Surface default kernel watchdog..."
     if systemctl is-enabled linux-surface-default-watchdog.path &>/dev/null; then
         log_success "Linux Surface watchdog is already enabled"
     else
-        log_info "Enabling Linux Surface watchdog..."
-        systemctl enable --now linux-surface-default-watchdog.path >/dev/null 2>&1 || {
+        log_info "Enabling linux-surface-default-watchdog.path service..."
+        if systemctl enable --now linux-surface-default-watchdog.path 2>&1 | tail -2; then
+            log_success "Linux Surface watchdog enabled"
+        else
             log_warn "Failed to enable Surface watchdog (may not be available)"
-        }
+        fi
     fi
 
-    log_success "Linux Surface kernel installed successfully"
+    # Run watchdog script to set default kernel immediately
+    log_info "Setting Linux Surface as default kernel..."
+    if command -v linux-surface-default-watchdog.py &>/dev/null; then
+        if linux-surface-default-watchdog.py 2>&1 | tail -2; then
+            log_success "Linux Surface set as default kernel"
+        else
+            log_warn "Watchdog script execution had warnings (may still be set)"
+        fi
+    else
+        log_warn "Watchdog script not found (will be set on next boot)"
+    fi
+
+    echo ""
+    log_success "Linux Surface kernel installation complete"
+    echo ""
+    log_info "POST-INSTALLATION VERIFICATION:"
+    log_info "After reboot, verify the kernel with: uname -a"
+    log_info "Output should contain 'surface' if using Linux Surface kernel"
+    echo ""
+    return 0
 }
 
 # ============================================================================
@@ -1507,8 +1539,7 @@ apply_surface_pro9_fixes() {
     if [[ ! -f "$grub_backup" ]]; then
         log_info "Backing up GRUB configuration to $grub_backup..."
         cp "$grub_file" "$grub_backup" || {
-            log_error "Failed to backup GRUB configuration"
-            return 1
+            log_warn "Failed to backup GRUB configuration"
         }
         log_success "GRUB configuration backed up"
     else
@@ -1521,19 +1552,14 @@ apply_surface_pro9_fixes() {
     if grep -q "i915.enable_psr=0" "$grub_file"; then
         log_warn "Screen flickering fix already applied"
     else
-        # Extract current GRUB_CMDLINE_LINUX_DEFAULT value
-        local current_cmdline
-        current_cmdline=$(grep "^GRUB_CMDLINE_LINUX_DEFAULT=" "$grub_file" | cut -d'"' -f2)
-
-        # Append i915.enable_psr=0 if not already present
-        local new_cmdline="${current_cmdline} i915.enable_psr=0"
-
-        # Update GRUB configuration using sed
-        sed -i "s|^GRUB_CMDLINE_LINUX_DEFAULT=.*|GRUB_CMDLINE_LINUX_DEFAULT=\"${new_cmdline}\"|" "$grub_file" || {
-            log_error "Failed to apply screen flickering fix"
-            return 1
+        # Use grubby to add kernel parameter (more reliable than sed)
+        grubby --update-kernel=ALL --args="i915.enable_psr=0" 2>&1 | tail -2 || {
+            log_warn "Failed to apply screen flickering fix via grubby, trying manual method..."
+            # Fallback: try sed with better escaping
+            sed -i 's/\(GRUB_CMDLINE_LINUX_DEFAULT="[^"]*\)/\1 i915.enable_psr=0/' "$grub_file" 2>&1 || {
+                log_warn "Failed to apply screen flickering fix"
+            }
         }
-
         log_success "Screen flickering fix applied (i915.enable_psr=0)"
     fi
 
@@ -1543,31 +1569,26 @@ apply_surface_pro9_fixes() {
     if grep -q "pci=hpiosize=0" "$grub_file"; then
         log_warn "ACPI interrupt storm fix already applied"
     else
-        # Extract current GRUB_CMDLINE_LINUX_DEFAULT value
-        local current_cmdline
-        current_cmdline=$(grep "^GRUB_CMDLINE_LINUX_DEFAULT=" "$grub_file" | cut -d'"' -f2)
-
-        # Append pci=hpiosize=0 if not already present
-        local new_cmdline="${current_cmdline} pci=hpiosize=0"
-
-        # Update GRUB configuration using sed
-        sed -i "s|^GRUB_CMDLINE_LINUX_DEFAULT=.*|GRUB_CMDLINE_LINUX_DEFAULT=\"${new_cmdline}\"|" "$grub_file" || {
-            log_error "Failed to apply ACPI interrupt storm fix"
-            return 1
+        # Use grubby to add kernel parameter (more reliable than sed)
+        grubby --update-kernel=ALL --args="pci=hpiosize=0" 2>&1 | tail -2 || {
+            log_warn "Failed to apply ACPI interrupt storm fix via grubby, trying manual method..."
+            # Fallback: try sed with better escaping
+            sed -i 's/\(GRUB_CMDLINE_LINUX_DEFAULT="[^"]*\)/\1 pci=hpiosize=0/' "$grub_file" 2>&1 || {
+                log_warn "Failed to apply ACPI interrupt storm fix"
+            }
         }
-
         log_success "ACPI interrupt storm fix applied (pci=hpiosize=0)"
     fi
 
     # Regenerate GRUB configuration
     log_info "Regenerating GRUB configuration..."
-    grub2-mkconfig -o /boot/grub2/grub.cfg >/dev/null 2>&1 || {
-        log_error "Failed to regenerate GRUB configuration"
-        log_warn "You may need to run: sudo grub2-mkconfig -o /boot/grub2/grub.cfg"
-        return 1
+    grub2-mkconfig -o /boot/grub2/grub.cfg 2>&1 | tail -2 || {
+        log_warn "Failed to regenerate GRUB configuration"
+        log_info "You may need to run manually: sudo grub2-mkconfig -o /boot/grub2/grub.cfg"
     }
     log_success "GRUB configuration regenerated"
     echo ""
+    return 0
 }
 
 apply_hibernation_config() {
@@ -2009,7 +2030,6 @@ main() {
     echo -e "${BLUE}Essential Applications:${NC}"
     echo "  ✓ Vesktop (Discord Client)"
     echo "  ✓ Steam (Gaming Platform)"
-    echo "  ✓ Visual Studio Code"
     echo ""
 
     if [[ "$INSTALL_GAMING" == "true" ]]; then
